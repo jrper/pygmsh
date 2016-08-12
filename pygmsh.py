@@ -1,7 +1,6 @@
 """ Module containing an expanded python gmsh class"""
 from __future__ import print_function
 
-
 import vtk
 from vtk.util import numpy_support
 import numpy
@@ -304,7 +303,73 @@ class GmshMesh(object):
         print('  %d Nodes'%len(self.nodes))
         print('  %d Elements'%len(self.elements))
 
+    def coherence(self):
 
+        def merge_points(ugrid):
+
+            mf = vtk.vtkMergePoints()
+            pts = vtk.vtkPoints()
+            mf.InitPointInsertion(pts,ugrid.GetBounds())
+
+            point_map = []
+            n_nonunique = 0
+
+    
+
+            for i in range(ugrid.GetNumberOfPoints()):
+                newid = vtk.mutable(0)
+                n_nonunique += mf.InsertUniquePoint(ugrid.GetPoint(i),newid)
+                point_map.append(newid)
+                
+            return pts, point_map
+
+        ugrid = self.as_vtk()
+
+        pts, point_map = merge_points(ugrid)
+
+        vgrid = vtk.vtkUnstructuredGrid()
+
+        vgrid.SetPoints(pts)
+
+        cell_map = []
+
+        for i in range(ugrid.GetNumberOfCells()):
+            cell = ugrid.GetCell(i)
+            ids = vtk.vtkIdList()
+
+            if cell.ComputeArea()==0.0:
+                continue
+
+            cell_map.append(i)
+
+            for j in range(cell.GetPointIds().GetNumberOfIds()):
+                ids.InsertNextId(point_map[cell.GetPointIds().GetId(j)])
+
+            vgrid.InsertNextCell(cell.GetCellType(),ids)
+
+        cd = vgrid.GetCellData()
+        icd = ugrid.GetCellData()
+
+        cd.CopyStructure(icd)
+
+        for i in range(icd.GetNumberOfArrays()):
+            data = cd.GetArray(i)
+            idata = icd.GetArray(i)
+
+            data.SetNumberOfComponents(idata.GetNumberOfComponents())
+            data.SetNumberOfTuples(vgrid.GetNumberOfCells())
+
+
+            for i in range(vgrid.GetNumberOfCells()):
+
+                data.SetTuple(i, cell_map[i], idata)
+        
+
+
+        
+        
+
+        return self.from_vtk(vgrid)
             
             
             
