@@ -5,8 +5,7 @@ import vtk
 from vtk.util import numpy_support
 import numpy
 import struct
-
-
+import copy
 
 class GmshMesh(object):
     """This is a class for storing nodes and elements. Based on Gmsh.py
@@ -27,6 +26,41 @@ class GmshMesh(object):
         self.filename = filename
         if self.filename:
             self.read()
+
+    def __add__(self, mesh):
+        if type(mesh) is not GmshMesh:
+            raise TypeError
+        
+        out = copy.deepcopy(self)
+        n_nodes = len(out.nodes)
+        n_ele = len(out.elements)
+
+        for id, node in mesh.nodes.items():
+            out.nodes[n_nodes+id]=node
+
+        for id, ele in mesh.elements.items():
+            out.elements[e_nele+id]=ele
+
+    def __iadd__(self,mesh):
+        if type(mesh) is not GmshMesh:
+            raise TypeError
+
+        n_nodes = len(self.nodes)
+        n_ele = len(self.elements)
+
+        for id, node in mesh.nodes.items():
+            self.nodes[n_nodes+id]=node
+
+        for id, ele in mesh.elements.items():
+            self.elements[e_nele+id]=ele
+
+
+    def nodecount(self):
+        return len(self.nodes)
+
+    def elementcount(self):
+        return len(self.elements)
+
 
     def reset(self):
         """Reinitialise Gmsh data structure"""
@@ -223,9 +257,38 @@ class GmshMesh(object):
         geofile.write(string)
         geofile.close()
 
+    def write_vtu(self, filename, **kwargs):
+        """Output mesh as a .vtu file with given filename."""
 
+        ugrid = self.as_vtk(**kwargs)
 
-    def as_vtk(self,elementary_index=0):
+        writer = vtk.vtkXMLUnstructuredGridWriter()
+        writer.SetFileName(filename)
+        if vtk.VTK_MAJOR_VERSION<6:
+            writer.SetInput(ugrid)
+        else:
+            writer.SetInputData(ugrid)
+        writer.Write()
+
+    def write_stl(self, filename, binary=False, **kwargs):
+        """Output mesh as a .stl stereo lithography file with given filename."""
+
+        ugrid = self.as_vtk(**kwargs)
+
+        if binary:
+            writer.SetFileTypeToBinary()
+        else:
+            writer.SetFileTypeToASCII()
+
+        writer = vtk.vtkSTLWriter()
+        writer.SetFileName(filename)
+        if vtk.VTK_MAJOR_VERSION<6:
+            writer.SetInput(ugrid)
+        else:
+            writer.SetInputData(ugrid)
+        writer.Write()
+
+    def as_vtk(self, elementary_index=0):
         """Convert to a VTK unstructured grid object, ugrid."""
 
         etype={1:vtk.VTK_LINE,
