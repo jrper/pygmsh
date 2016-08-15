@@ -39,7 +39,9 @@ class GmshMesh(object):
             out.nodes[n_nodes+id]=node
 
         for id, ele in mesh.elements.items():
-            out.elements[e_nele+id]=ele
+            out.elements[n_ele+id]=ele
+
+        return out
 
     def __iadd__(self,mesh):
         if type(mesh) is not GmshMesh:
@@ -52,7 +54,9 @@ class GmshMesh(object):
             self.nodes[n_nodes+id]=node
 
         for id, ele in mesh.elements.items():
-            self.elements[e_nele+id]=ele
+            self.elements[n_ele+id]=ele
+
+        return self
 
 
     def nodecount(self):
