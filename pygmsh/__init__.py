@@ -23,6 +23,10 @@ class GmshMesh(object):
         """Initialise Gmsh data structure"""
         self.nodes = {}
         self.elements = {}
+        self.physical_points = set()
+        self.physical_lines = set()
+        self.physical_surfaces = set()
+        self.physical_volumes = set()
         self.filename = filename
         if self.filename:
             self.read()
@@ -60,10 +64,18 @@ class GmshMesh(object):
 
 
     def nodecount(self):
+        """Return number of nodes in the mesh."""
         return len(self.nodes)
 
     def elementcount(self):
+        """Return number of elements in the mesh."""
         return len(self.elements)
+
+    def transform(self, func):
+        """Apply a transformation to the mesh nodes."""
+
+        for k, v in self.nodes.items():
+            self.nodes[k] = func(v)
 
 
     def reset(self):
@@ -142,6 +154,7 @@ class GmshMesh(object):
                             tags = columns[3:3+ntags]
                             nodes = columns[3+ntags:]
                         self.elements[id] = (type, tags, nodes)
+                        self.__add_physical_id__(type,tags[-1])
                 elif readmode == 3 and ftype==1:
                     tdict={1:2,2:3,3:4,4:4,5:5,6:6,7:5,8:3,9:6,10:9,11:10}
                     try:
@@ -157,6 +170,7 @@ class GmshMesh(object):
                                 self.elements[data[0]]=(etype,
                                                         data[1:1+ntags],
                                                         data[1+ntags:])
+                                self.__add_physical_id__(etype,data[ntags])
                     except:
                         raise
                     mshfile.read(1)
@@ -165,6 +179,15 @@ class GmshMesh(object):
         print('  %d Elements'%len(self.elements))
 
         mshfile.close()
+
+    def __add_physical_id__(self,etype,tag):
+
+        physical_dict = {15:self.physical_points,
+                         1:self.physical_lines,
+                         2:self.physical_surfaces}
+
+        physical_dict[etype].add(tag)
+        
 
     def write_ascii(self, filename=None):
         """Dump the mesh out to a Gmsh 2.0 msh file."""
@@ -295,7 +318,8 @@ class GmshMesh(object):
     def as_vtk(self, elementary_index=0):
         """Convert to a VTK unstructured grid object, ugrid."""
 
-        etype={1:vtk.VTK_LINE,
+        etype={15:vtk.VTK_PIXEL,
+               1:vtk.VTK_LINE,
                2:vtk.VTK_TRIANGLE}
         point_map = {};        
         
@@ -344,8 +368,9 @@ class GmshMesh(object):
     def from_vtk(self, ugrid):
         """Convert from a VTK unstructured grid object, ugrid."""
 
-        etype={vtk.VTK_LINE:1,
-               vtk.VTK_TRIANGLE:1}
+        etype={vtk.VTK_PIXEL:15,
+               vtk.VTK_LINE:1,
+               vtk.VTK_TRIANGLE:2}
 
         self.reset()
 
@@ -365,7 +390,7 @@ class GmshMesh(object):
                 tags.append(ugrid.GetCellData().GetArray("PhysicalIds").GetValue(i))
 
             self.elements[i] = (etype[cell.GetCellType()],tags,[ids.GetId(_) for _ in range(ids.GetNumberOfIds())])
-
+            self.__add_physical_id__(etype[cell.GetCellType()], tags[-1])
 
         print('  %d Nodes'%len(self.nodes))
         print('  %d Elements'%len(self.elements))
@@ -429,12 +454,7 @@ class GmshMesh(object):
 
             for i in range(vgrid.GetNumberOfCells()):
 
-                data.SetTuple(i, cell_map[i], idata)
-        
-
-
-        
-        
+                data.SetTuple(i, cell_map[i], idata)        
 
         return self.from_vtk(vgrid)
             
