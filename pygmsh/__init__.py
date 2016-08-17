@@ -7,6 +7,23 @@ import numpy
 import struct
 import copy
 
+class Node(object):
+    def __init__(self, x):
+        self.vertices = numpy.empty(3)
+        self.vertices[:len(x)] = x[:]
+
+    def __getitem__(self,i):
+        return self.vertices[i]
+
+    def __len__(self):
+        return len(self.vertices)
+
+    def __hash__(self):
+        return hash(self.vertices)
+
+    def __eq__(self, x):
+        return all(self.vertices == numpy.array(x))
+
 class GmshMesh(object):
     """This is a class for storing nodes and elements. Based on Gmsh.py
 
@@ -40,7 +57,7 @@ class GmshMesh(object):
         n_ele = len(out.elements)
 
         for id, node in mesh.nodes.items():
-            out.nodes[n_nodes+id]=node
+            out.nodes[n_nodes+id]=Node(node)
 
         for id, ele in mesh.elements.items():
             out.elements[n_ele+id]=ele
@@ -55,12 +72,22 @@ class GmshMesh(object):
         n_ele = len(self.elements)
 
         for id, node in mesh.nodes.items():
-            self.nodes[n_nodes+id]=node
+            self.nodes[n_nodes+id]=Node(node)
 
         for id, ele in mesh.elements.items():
             self.elements[n_ele+id]=ele
 
         return self
+
+    def insert_node(self, node_id, pos):
+        if node_id in self.nodes.keys():
+            raise KeyError
+        self.nodes[node_id] = Node(pos)
+
+    def insert_element(self, element_id, etype, tags, nodes):
+        if element_id in self.elements.keys():
+            raise KeyError
+        self.elements[element_id] = (etype, tags, nodes)
 
 
     def nodecount(self):
@@ -75,7 +102,7 @@ class GmshMesh(object):
         """Apply a transformation to the mesh nodes."""
 
         for k, v in self.nodes.items():
-            self.nodes[k] = func(v)
+            self.nodes[k] = Node(func(v))
 
 
     def reset(self):
@@ -124,13 +151,13 @@ class GmshMesh(object):
                     # Version 1.0 or 2.0 Nodes
                     try:
                         if ftype==0 and len(columns)==4:
-                            self.nodes[int(columns[0])] = map(float, columns[1:])
+                            self.nodes[int(columns[0])] = Node(map(float, columns[1:]))
                         elif ftype==1:
                             nnods=int(columns[0])
                             for N in range(nnods):
                                 data=mshfile.read(4+3*dsize)
                                 i,x,y,z=struct.unpack('=i3d',data)
-                                self.nodes[i]=(x,y,z)
+                                self.nodes[i]=Node((x,y,z))
                             mshfile.read(1)
                     except ValueError:
                         print('Node format error: '+line, ERROR)

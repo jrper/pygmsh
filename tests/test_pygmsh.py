@@ -9,22 +9,30 @@ def test_blank_init():
 def test_init_from_ascii_file():
     m = pygmsh.GmshMesh('tests/test.msh')
     assert(m)
+    assert(m.nodecount()>0)
+    assert(m.elementcount()>0)
 
 def test_init_from_binary_file():
     m = pygmsh.GmshMesh('tests/test_bin.msh')
     assert(m)
+    assert(m.nodecount()>0)
+    assert(m.elementcount()>0)
 
 def test_read_from_ascii_file():
     m = pygmsh.GmshMesh()
     f = open('tests/test.msh','r')
     m.read(f)
     assert(m)
+    assert(m.nodecount()>0)
+    assert(m.elementcount()>0)
     
 def test_read_from_binary_file():
     m = pygmsh.GmshMesh()
     f = open('tests/test_bin.msh','r')
     m.read(f)
     assert(m)
+    assert(m.nodecount()>0)
+    assert(m.elementcount()>0)
 
 def test_conversion_to_vtu():
     m = pygmsh.GmshMesh('tests/test.msh')
@@ -91,6 +99,42 @@ def test_reset():
 
     assert(m.nodecount() == 0)
     assert(m.elementcount() == 0)
+
+def test_element_insertion():
+
+    m = pygmsh.GmshMesh()
+
+    assert(m.nodecount()==0)
+
+    m.insert_node(0,(0,0,0))
+
+    assert(m.nodecount()==1)
+
+def test_element_insertion():
+
+    m = pygmsh.GmshMesh()
+
+    assert(m.nodecount()==0)
+
+    m.insert_element(0,1,(0,1),(0,1))
+
+    assert(m.elementcount()==1)
     
 
-    
+def test_transformation():
+
+    m = pygmsh.GmshMesh()
+
+    m.insert_node(0,(0,0,0))
+    m.insert_node(1,(1,0,0))
+    m.insert_node(2,(0,1,0))
+
+    def func(x):
+        return (x[1],-x[0],0)
+
+    m.transform(func)
+
+    assert(m.nodes[0] == (0,0,0))
+    assert(m.nodes[1] == (0,-1,0))
+    assert(m.nodes[2] == (1,0,0))
+
