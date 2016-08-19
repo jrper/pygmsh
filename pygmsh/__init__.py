@@ -7,10 +7,33 @@ import numpy
 import struct
 import copy
 
+class LineDict(object):
+    def __init__(self,*args,**kwargs):
+        self._data=dict(*args,**kwargs)
+    def __getitem__(self,i):
+        return self._data[tuple(sorted(i))]
+    def __len__(self):
+        return len(self._data)
+    def setdefault(self,k,v):
+        if tuple(k) in self._data:
+            return self._data[tuple(k)]
+        ks = list(k)
+        ks.reverse()
+        if tuple(ks) in self._data:
+            return -self._data[tuple(ks)]
+        ## Otherwise add it
+        ks=tuple(k)
+        self._data[ks]=v
+        return self._data[ks]
+    def items(self):
+        return self._data.items()
+
 class Node(object):
-    def __init__(self, x):
+    def __init__(self, x=None):
+        """Initialise node from data if available"""
         self.vertices = numpy.empty(3)
-        self.vertices[:len(x)] = x[:]
+        if x:
+            self.vertices[:len(x)] = x[:]
 
     def __getitem__(self,i):
         return self.vertices[i]
@@ -23,6 +46,28 @@ class Node(object):
 
     def __eq__(self, x):
         return all(self.vertices == numpy.array(x))
+
+class Element(object):
+
+    def __init__(self, etype, tags=(0,0), nodes=()):
+        self.etype = etype
+        self.tags = tags
+        self.nodes = nodes
+
+        self._data=[etype, tags, nodes]
+
+    def __len__(self):
+        return len(self.nodes)
+
+    def __eq__(self,x):
+        return all(self.nodes == x)
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def __getitem__(self,i):
+        return self._data[i]
+        
 
 class GmshMesh(object):
     """This is a class for storing nodes and elements. Based on Gmsh.py
@@ -49,6 +94,7 @@ class GmshMesh(object):
             self.read()
 
     def __add__(self, mesh):
+        """ Get union of meshes through concatenation."""
         if type(mesh) is not GmshMesh:
             raise TypeError
         
@@ -65,6 +111,7 @@ class GmshMesh(object):
         return out
 
     def __iadd__(self,mesh):
+        """ Get in place union of meshes through concatenation."""
         if type(mesh) is not GmshMesh:
             raise TypeError
 
@@ -75,20 +122,23 @@ class GmshMesh(object):
             self.nodes[n_nodes+id]=Node(node)
 
         for id, ele in mesh.elements.items():
-            self.elements[n_ele+id]=ele
+            self.elements[n_ele+id]=Element(*ele)
 
         return self
 
-    def insert_node(self, node_id, pos):
+    def insert_node(self, node_id, pos=None):
+        """Insert node into mesh data structure."""
         if node_id in self.nodes.keys():
             raise KeyError
         self.nodes[node_id] = Node(pos)
 
     def insert_element(self, element_id, etype, tags, nodes):
+        """Insert element into mesh data structure."""
         if element_id in self.elements.keys():
             raise KeyError
-        self.elements[element_id] = (etype, tags, nodes)
+        self.elements[element_id] = Element(etype, tags, nodes)
 
+        self.__add_physical_id__(etype,tags[-1])
 
     def nodecount(self):
         """Return number of nodes in the mesh."""
@@ -180,7 +230,7 @@ class GmshMesh(object):
                             ntags = columns[2]
                             tags = columns[3:3+ntags]
                             nodes = columns[3+ntags:]
-                        self.elements[id] = (type, tags, nodes)
+                        self.elements[id] = Element(type, tags, nodes)
                         self.__add_physical_id__(type,tags[-1])
                 elif readmode == 3 and ftype==1:
                     tdict={1:2,2:3,3:4,4:4,5:5,6:6,7:5,8:3,9:6,10:9,11:10}
@@ -194,7 +244,7 @@ class GmshMesh(object):
                                 mysize=1+ntags+tdict[etype]
                                 data=struct.unpack('=%di'%mysize,
                                                    mshfile.read(4*mysize))
-                                self.elements[data[0]]=(etype,
+                                self.elements[data[0]]=Element(etype,
                                                         data[1:1+ntags],
                                                         data[1+ntags:])
                                 self.__add_physical_id__(etype,data[ntags])
@@ -208,6 +258,7 @@ class GmshMesh(object):
         mshfile.close()
 
     def __add_physical_id__(self,etype,tag):
+        """Insert new physical id into data structure."""
 
         physical_dict = {15:self.physical_points,
                          1:self.physical_lines,
@@ -231,7 +282,7 @@ class GmshMesh(object):
         print('$EndNodes',file=mshfile)
         print('$Elements\n%d'%len(self.elements),file=mshfile)
         for ele_id, elem in self.elements.items():
-            (ele_type, tags, nodes) = elem
+            (ele_type, tags, nodes) = tuple(elem)
             print(ele_id,' ',ele_type,' ',len(tags),' ',
                   ' '.join([str(c) for c in tags]),' ',
                   ' '.join([str(c) for c in nodes]), sep="", file=mshfile)
@@ -255,7 +306,7 @@ class GmshMesh(object):
         mshfile.write("\n$EndNodes\n")
         mshfile.write("$Elements\n%d\n"%(len(self.elements)))
         for ele_id, elem in self.elements.items():
-            (ele_type, tags, nodes) = elem
+            (ele_type, tags, nodes) = tuple(elem)
             mshfile.write(struct.pack('@i',ele_type))
             mshfile.write(struct.pack('@i',1))
             mshfile.write(struct.pack('@i',len(tags)))
@@ -277,6 +328,9 @@ class GmshMesh(object):
             string += 'Point(%d) = {%f,%f,%f};\n'%(k,x[0],x[1],x[2])
 
         line_no = 1;
+
+        lines = LineDict()
+        surfaces = []
         line_ids = {}
         surface_ids = {}
 
@@ -287,20 +341,24 @@ class GmshMesh(object):
                 else:
                     line_ids.setdefault(l[1][1],[]).append(line_no)
                 line_ids.setdefault(l[1][-1],[]).append(line_no)
-                string += "Line(%d) = {%d,%d};\n"%(line_no,l[2][0],l[2][1])
-                line_no+=1
+                lines.setdefault(l[2][:],len(lines)+1)
             elif l[0]==2:
                 if use_physicals:
                     surface_ids.setdefault(l[1][-1],[]).append(k)
                 else:
                     surface_ids.setdefault(l[1][1],[]).append(k)
-                string += "Line(%d) = {%d,%d};\n"%(line_no,l[2][0],l[2][1])
-                string += "Line(%d) = {%d,%d};\n"%(line_no+1,l[2][1],l[2][2])
-                string += "Line(%d) = {%d,%d};\n"%(line_no+2,l[2][2],l[2][0])
-                string += "Line Loop(%d) = {%d,%d,%d};"%tuple([k]+range(line_no,line_no+3))
-                string += "Plane Surface(%d) = %d;"%(k,k)
-                line_no+=3
-                
+                e1=lines.setdefault([l[2][0],l[2][1]],len(lines)+1)
+                e2=lines.setdefault([l[2][1],l[2][2]],len(lines)+1)
+                e3=lines.setdefault([l[2][2],l[2][0]],len(lines)+1)
+                surfaces.append([e1,e2,e3])
+
+        for line, line_id in sorted(lines.items(),key=lambda x:x[1]):
+            string += "Line(%d) = {%d,%d};\n"%(line_id,line[0],line[1])
+
+        for surface_id, surface in enumerate(surfaces):
+            string += "Line Loop(%d) = {%d,%d,%d};"%tuple([surface_id+1]+surface)
+            string += "Plane Surface(%d) = %d;\n"%(surface_id+1,surface_id+1)
+
         if use_ids:
             for k, v in line_ids.items():
                 string += "Physical Line(%d) = {%s};\n"%(k,",".join(map(str,v)))
@@ -310,6 +368,57 @@ class GmshMesh(object):
         geofile = open(filename, 'w')
         geofile.write(string)
         geofile.close()
+
+    def write_journal(self, filename = None, use_ids=True, use_physicals=True):
+        """Dump the mesh out to a cubit .jou journal file."""
+
+        
+        string = "undo off\n"
+        string += "reset\n"
+        string += "set echo off\n"
+        string += "set journal off\n"
+
+        for k,x in self.nodes.items():
+            string += "create vertex %f %f %f\n"%(x[0],x[1],x[2])
+
+        lines = LineDict()
+        surfaces = []
+        line_ids = {}
+        surface_ids = {}
+
+        for k,l in self.elements.items():
+            if l[0]==1:
+                if use_physicals:
+                    line_ids.setdefault(l[1][-1],[]).append(line_no)
+                else:
+                    line_ids.setdefault(l[1][1],[]).append(line_no)
+                line_ids.setdefault(l[1][-1],[]).append(line_no)
+                lines.setdefault(l[2][:],len(lines)+1)
+            elif l[0]==2:
+                if use_physicals:
+                    surface_ids.setdefault(l[1][-1],[]).append(k)
+                else:
+                    surface_ids.setdefault(l[1][1],[]).append(k)
+                e1=abs(lines.setdefault([l[2][0],l[2][1]],len(lines)+1))
+                e2=abs(lines.setdefault([l[2][1],l[2][2]],len(lines)+1))
+                e3=abs(lines.setdefault([l[2][2],l[2][0]],len(lines)+1))
+                surfaces.append([e1,e2,e3])
+
+
+        for line, line_id in sorted(lines.items(),key=lambda x:x[1]):
+            string += "create curve vertex %d %d\n"%line
+        for surface in surfaces:
+            string += "create surface curve %d %d %d\n"%tuple(surface)
+                
+        if use_ids:
+            for k, v in line_ids.items():
+                pass
+            for k, v in surface_ids.items():
+                string += "Sideset %d surface %s\n"%(k," ".join(map(str,v)))
+
+        journalfile = open(filename, 'w')
+        journalfile.write(string)
+        journalfile.close()
 
     def write_vtu(self, filename, **kwargs):
         """Output mesh as a .vtu file with given filename."""
@@ -423,6 +532,7 @@ class GmshMesh(object):
         print('  %d Elements'%len(self.elements))
 
     def coherence(self):
+        """Remove duplicate nodes and degenerate elements."""
 
         def merge_points(ugrid):
 
@@ -456,8 +566,16 @@ class GmshMesh(object):
             cell = ugrid.GetCell(i)
             ids = vtk.vtkIdList()
 
-            if cell.ComputeArea()==0.0:
-                continue
+
+            if cell.GetCellDimension()==1:
+                if cell.GetLength2()==0.0:
+                    continue
+            elif cell.GetCellDimension()==2:
+                if cell.ComputeArea()==0.0:
+                    continue
+            elif cell.GetCellDimension()==3:
+                if cell.ComputeVolume()==0.0:
+                    continue
 
             cell_map.append(i)
 
