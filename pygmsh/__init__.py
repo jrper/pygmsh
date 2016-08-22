@@ -523,6 +523,155 @@ class GmshMesh(object):
         journalfile.close()
 
 
+    def write_simple_journal(self, filename = None, use_ids=True, use_physicals=True):
+        """Dump the mesh out to a ,geo file after joining coplanar surfaces."""
+
+        string = "undo off\n"
+        string += "reset\n"
+        string += "set echo off\n"
+        string += "set journal off\n"
+
+        lines = LineDict()
+        surfaces = []
+        edges = {}
+        normals = []
+        line_ids = {}
+        vertices = set()
+        surface_ids = {}
+        open_surf ={}
+
+
+        for k,l in self.elements.items():
+            if l[0]==1:
+                if use_physicals:
+                    line_ids.setdefault(l[1][-1],[]).append(line_no)
+                else:
+                    line_ids.setdefault(l[1][1],[]).append(line_no)
+                line_ids.setdefault(l[1][-1],[]).append(line_no)
+                lines.setdefault(l[2][:],len(lines)+1)
+            elif l[0]==2:
+                if use_physicals:
+                    surface_ids.setdefault(l[1][-1],[]).append(k)
+                else:
+                    surface_ids.setdefault(l[1][1],[]).append(k)
+                e1=lines.setdefault([l[2][0],l[2][1]],len(lines)+1)
+                e2=lines.setdefault([l[2][1],l[2][2]],len(lines)+1)
+                e3=lines.setdefault([l[2][2],l[2][0]],len(lines)+1)
+                surfaces.append([e1,e2,e3])
+
+                sid=len(normals)
+                edges.setdefault(abs(e1),[]).append(sid)
+                edges.setdefault(abs(e2),[]).append(sid)
+                edges.setdefault(abs(e3),[]).append(sid)
+
+                n =numpy.cross(self.nodes[l[2][1]].vertices-self.nodes[l[2][0]].vertices,
+                               self.nodes[l[2][2]].vertices-self.nodes[l[2][0]].vertices)
+                n=n/numpy.sqrt(sum(n**2))
+
+                normals.append(n)
+
+        element_map = range(len(normals))
+
+        for edge, eles in sorted(edges.items()):
+
+            print(edge,eles)
+
+            oeles=None
+
+            while oeles!=eles:
+                oeles=eles
+                eles=[element_map[eles[0]],element_map[eles[1]]]
+                print(eles, oeles)
+
+            eles = sorted(eles)
+
+            print(eles,element_map[eles[0]],element_map[eles[1]])
+            
+            print(type(surfaces[eles[0]]),type(surfaces[eles[1]]))
+
+            print(abs(numpy.dot(normals[eles[0]],normals[eles[1]])))
+            print(1.0-abs(numpy.dot(normals[eles[0]],normals[eles[1]]))<1.0e-8)
+            if 1.0-abs(numpy.dot(normals[eles[0]],normals[eles[1]]))<1.0e-8:
+                if edge in surfaces[eles[0]]:
+                    I = surfaces[eles[0]].index(edge), 1
+                else:
+                    I = surfaces[eles[0]].index(-edge), -1
+                if eles[1]!=eles[0]:
+                    if edge in surfaces[eles[1]]:
+                        J = surfaces[eles[1]].index(edge), 1
+                    else:
+                        J = surfaces[eles[1]].index(-edge), -1
+                    element_map[eles[1]]=eles[0]
+                    surfaces[eles[0]] = surfaces[eles[0]][I[0]+1:]+surfaces[eles[0]][0:I[0]]
+                    surfaces[eles[1]] = surfaces[eles[1]][J[0]+1:]+surfaces[eles[1]][:J[0]]
+                    if I[1] == J[1]:
+                        surfaces[eles[1]].reverse()
+                    surfaces[eles[0]].extend(surfaces[eles[1]])
+                    surfaces[eles[1]] = None
+                    edges.pop(edge)
+                else:
+                    while edge in surfaces[eles[0]]:
+                            surfaces[eles[0]].remove(edge)
+                    while -edge in surfaces[eles[0]]:
+                            surfaces[eles[0]].remove(-edge)
+                    edges.pop(edge)
+                    open_surf.setdefault(eles[0],[]).append(edge)
+                    
+
+            print(type(surfaces[eles[0]]),type(surfaces[eles[0]]))
+
+
+        rev_lin={}
+        for line, line_id in sorted(lines.items(),key=lambda x:x[1]):
+            if line_id in edges:
+                vertices.add(line[0])
+                vertices.add(line[1])
+                rev_lin[line_id]=line[1]
+                rev_lin[-line_id]=line[0]
+
+        vmap={}
+        i=1
+        for k,x in self.nodes.items():
+            if k in vertices:
+                string += "create vertex %f %f %f\n"%(x[0],x[1],x[2])
+                vmap[k] = i
+                i += 1
+
+        lmap={}
+        i=1
+        for line, line_id in sorted(lines.items(),key=lambda x:x[1]):
+            if line_id in edges:
+                string += "create curve vertex %d %d\n"%(vmap[line[0]],
+                                                         vmap[line[1]])
+                lmap[line_id] = i
+                i += 1
+
+
+        emap = {}
+        i = 1
+        for surface_id, surface in enumerate(surfaces):
+            if element_map[surface_id]==surface_id:
+                string += "create surface curve %s\n"%" ".join(map(str,
+                                                                   map(lambda x:lmap[abs(x)],
+                                                                       surface)))
+                emap[surface_id] = i
+                i += 1
+                    
+
+        if use_ids:
+            for k, v in line_ids.items():
+                pass
+            for k, v in surface_ids.items():
+                V=[V for V in v if element_map[V-1]==V-1]
+                V = map(lambda x: emap[x-1], V)
+                string += "Sideset %d surface %s\n"%(k," ".join(map(str,V)))
+
+        print(sum(numpy.array(element_map)==range(len(element_map))))
+
+        journalfile = open(filename, 'w')
+        journalfile.write(string)
+        journalfile.close()
+
     def write_journal(self, filename = None, use_ids=True, use_physicals=True):
         """Dump the mesh out to a cubit .jou journal file."""
 
