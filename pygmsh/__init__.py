@@ -60,7 +60,7 @@ class Element(object):
         return len(self.nodes)
 
     def __eq__(self,x):
-        return all(self.nodes == x)
+        return self.nodes == x
 
     def __iter__(self):
         return iter(self._data)
@@ -262,7 +262,8 @@ class GmshMesh(object):
 
         physical_dict = {15:self.physical_points,
                          1:self.physical_lines,
-                         2:self.physical_surfaces}
+                         2:self.physical_surfaces,
+                         4:self.physical_volumes}
 
         physical_dict[etype].add(tag)
         
@@ -319,10 +320,14 @@ class GmshMesh(object):
                       
         mshfile.close()
 
-    def write_geo(self, filename = None, use_ids=True, use_physicals=True):
+    def write_geo(self, filename = None, use_ids=True, use_physicals=True,
+                  compound_surfaces=[]):
         """Dump the mesh out to a Gmsh .geo geometry file."""
 
         string=""
+
+        if compound_surfaces:
+            string += 'Mesh.RemeshAlgorithm=1;\n'
 
         for k,x in self.nodes.items():
             string += 'Point(%d) = {%f,%f,%f};\n'%(k,x[0],x[1],x[2])
@@ -337,14 +342,13 @@ class GmshMesh(object):
         for k,l in self.elements.items():
             if l[0]==1:
                 if use_physicals:
-                    line_ids.setdefault(l[1][-1],[]).append(line_no)
+                    line_ids.setdefault(l[1][0],[]).append(line_no)
                 else:
                     line_ids.setdefault(l[1][1],[]).append(line_no)
-                line_ids.setdefault(l[1][-1],[]).append(line_no)
                 lines.setdefault(l[2][:],len(lines)+1)
             elif l[0]==2:
                 if use_physicals:
-                    surface_ids.setdefault(l[1][-1],[]).append(k)
+                    surface_ids.setdefault(l[1][0],[]).append(k)
                 else:
                     surface_ids.setdefault(l[1][1],[]).append(k)
                 e1=lines.setdefault([l[2][0],l[2][1]],len(lines)+1)
@@ -363,7 +367,11 @@ class GmshMesh(object):
             for k, v in line_ids.items():
                 string += "Physical Line(%d) = {%s};\n"%(k,",".join(map(str,v)))
             for k, v in surface_ids.items():
-                string += "Physical Surface(%d) = {%s};\n"%(k,",".join(map(str,v)))
+                if k in compound_surfaces:
+                    string += "Compound Surface(%d) = {%s};\n"%(len(surfaces)+k+1,",".join(map(str,v)))
+                    string += "Physical Surface(%d) = {%s};\n"%(k,len(surfaces)+k+1)
+                else:
+                    string += "Physical Surface(%d) = {%s};\n"%(k,",".join(map(str,v)))
 
         geofile = open(filename, 'w')
         geofile.write(string)
@@ -807,7 +815,8 @@ class GmshMesh(object):
 
         etype={15:vtk.VTK_PIXEL,
                1:vtk.VTK_LINE,
-               2:vtk.VTK_TRIANGLE}
+               2:vtk.VTK_TRIANGLE,
+               4:vtk.VTK_TETRA}
         point_map = {};        
         
         ugrid = vtk.vtkUnstructuredGrid()
@@ -857,12 +866,13 @@ class GmshMesh(object):
 
         etype={vtk.VTK_PIXEL:15,
                vtk.VTK_LINE:1,
-               vtk.VTK_TRIANGLE:2}
+               vtk.VTK_TRIANGLE:2,
+               vtk.VTK_TETRA:4}
 
         self.reset()
 
         for i in range(ugrid.GetNumberOfPoints()):
-            self.nodes[i] = ugrid.GetPoint(i)
+            self.nodes[i+1] = ugrid.GetPoint(i)
         
 
         for i in range(ugrid.GetNumberOfCells()):
@@ -876,13 +886,64 @@ class GmshMesh(object):
             if ugrid.GetCellData().HasArray("PhysicalIds"):
                 tags.append(ugrid.GetCellData().GetArray("PhysicalIds").GetValue(i))
 
-            self.elements[i] = (etype[cell.GetCellType()],tags,[ids.GetId(_) for _ in range(ids.GetNumberOfIds())])
+            self.elements[i+1] = (etype[cell.GetCellType()],tags,[ids.GetId(_)+1 for _ in range(ids.GetNumberOfIds())])
             self.__add_physical_id__(etype[cell.GetCellType()], tags[-1])
 
         print('  %d Nodes'%len(self.nodes))
         print('  %d Elements'%len(self.elements))
 
-    def coherence(self):
+    def collapse_edges(self, tol):
+        """Collapse and remove any edges smaller than tol"""
+
+        ugrid = self.as_vtk()
+
+        extract = vtk.vtkExtractEdges()
+
+        extract.SetInputData(ugrid)
+
+        extract.Update()
+
+        edges = extract.GetOutput()
+
+        elengths=[]
+
+        for _ in range(edges.GetNumberOfCells()):
+            cell = edges.GetCell(_)
+            elengths.append(cell.GetLength2())
+
+        elist = list(enumerate(elengths))
+        elist.sort(key=lambda _:_[1])
+
+
+        loc = vtk.vtkPointLocator()
+        loc.SetDataSet(ugrid)
+        loc.BuildLocator()
+
+        for k,sqrlen in elist:
+            if sqrlen>=tol**2:
+                break
+            
+            cell = edges.GetCell(k)
+
+            pid0 = cell.GetPoints().GetPoint(0)
+            pid1 = cell.GetPoints().GetPoint(1)
+
+            pid0 = loc.FindClosestPoint(pid0)
+            pid1 = loc.FindClosestPoint(pid1)
+
+            pt0 = ugrid.GetPoint(pid0)
+            pt1 = ugrid.GetPoint(pid1)
+
+            ptm = [(p0+p1)/2.0 for p0,p1 in zip(pt0,pt1)]
+
+            ugrid.GetPoints().SetPoint(pid0,ptm)
+            ugrid.GetPoints().SetPoint(pid1,ptm)
+
+        self.coherence(ugrid)
+            
+        
+
+    def coherence(self, ugrid=None):
         """Remove duplicate nodes and degenerate elements."""
 
         def merge_points(ugrid):
@@ -903,7 +964,8 @@ class GmshMesh(object):
                 
             return pts, point_map
 
-        ugrid = self.as_vtk()
+        if ugrid is None:
+            ugrid = self.as_vtk()
 
         pts, point_map = merge_points(ugrid)
 
@@ -925,7 +987,8 @@ class GmshMesh(object):
                 if cell.ComputeArea()==0.0:
                     continue
             elif cell.GetCellDimension()==3:
-                if cell.ComputeVolume()==0.0:
+                if cell.ComputeVolume(*[cell.GetPoints().GetPoint(_)
+                                              for _ in range(4)])==0.0:
                     continue
 
             cell_map.append(i)
