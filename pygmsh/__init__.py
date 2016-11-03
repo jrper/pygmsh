@@ -423,26 +423,23 @@ class GmshMesh(object):
                 normals.append(n)
 
         element_map = range(len(normals))
+        rebuild = set()
 
         for edge, eles in sorted(edges.items()):
 
-            print(edge,eles)
+            ## special case of a plane touching itself
+            if len(eles)<2:
+                continue
 
             oeles=None
 
-            while oeles!=eles:
+            
+            while oeles!=eles and len(eles)>1:
                 oeles=eles
                 eles=[element_map[eles[0]],element_map[eles[1]]]
-                print(eles, oeles)
 
             eles = sorted(eles)
 
-            print(eles,element_map[eles[0]],element_map[eles[1]])
-            
-            print(type(surfaces[eles[0]]),type(surfaces[eles[1]]))
-
-            print(abs(numpy.dot(normals[eles[0]],normals[eles[1]])))
-            print(1.0-abs(numpy.dot(normals[eles[0]],normals[eles[1]]))<1.0e-8)
             if 1.0-abs(numpy.dot(normals[eles[0]],normals[eles[1]]))<1.0e-8:
                 if edge in surfaces[eles[0]]:
                     I = surfaces[eles[0]].index(edge), 1
@@ -460,6 +457,7 @@ class GmshMesh(object):
                         surfaces[eles[1]].reverse()
                     surfaces[eles[0]].extend(surfaces[eles[1]])
                     surfaces[eles[1]] = None
+                    rebuild.discard(eles[1])
                     edges.pop(edge)
                 else:
                     while edge in surfaces[eles[0]]:
@@ -468,10 +466,7 @@ class GmshMesh(object):
                             surfaces[eles[0]].remove(-edge)
                     edges.pop(edge)
                     open_surf.setdefault(eles[0],[]).append(edge)
-                    
-
-            print(type(surfaces[eles[0]]),type(surfaces[eles[0]]))
-
+                    rebuild.add(eles[0])
 
         rev_lin={}
         for line, line_id in sorted(lines.items(),key=lambda x:x[1]):
@@ -492,8 +487,7 @@ class GmshMesh(object):
 
         for surface_id, surface in enumerate(surfaces):
             if element_map[surface_id]==surface_id:
-                if surface_id in open_surf:
-                    print("bother", surface_id, open_surf[surface_id])
+                if surface_id in open_surf and False:
                     
                     cuts =[]
                     p=surface[-1]
@@ -523,8 +517,6 @@ class GmshMesh(object):
                 string += "Physical Line(%d) = {%s};\n"%(k,",".join(map(str,v)))
             for k, v in surface_ids.items():
                 string += "Physical Surface(%d) = {%s};\n"%(k,",".join(map(str,v)))
-
-        print(sum(numpy.array(element_map)==range(len(element_map))))
 
         journalfile = open(filename, 'w')
         journalfile.write(string)
@@ -872,7 +864,7 @@ class GmshMesh(object):
         self.reset()
 
         for i in range(ugrid.GetNumberOfPoints()):
-            self.nodes[i+1] = ugrid.GetPoint(i)
+            self.nodes[i+1] = Node(ugrid.GetPoint(i))
         
 
         for i in range(ugrid.GetNumberOfCells()):
@@ -886,13 +878,45 @@ class GmshMesh(object):
             if ugrid.GetCellData().HasArray("PhysicalIds"):
                 tags.append(ugrid.GetCellData().GetArray("PhysicalIds").GetValue(i))
 
+            if not tags:
+                tags.extend((i, i))
+
             self.elements[i+1] = (etype[cell.GetCellType()],tags,[ids.GetId(_)+1 for _ in range(ids.GetNumberOfIds())])
             self.__add_physical_id__(etype[cell.GetCellType()], tags[-1])
 
         print('  %d Nodes'%len(self.nodes))
         print('  %d Elements'%len(self.elements))
 
-    def collapse_edges(self, tol):
+        return self
+
+    def read_vtu(self, filename):
+        """Convert from a VTU file."""
+        
+        reader = vtk.vtkXMLUnstructuredGridReader()
+        reader.SetFileName(filename)
+        reader.Update()
+
+        self.from_vtu(reader.GetOutput)
+
+    def read_stl(self, filename):
+        """Convert from an STL file."""
+        
+        reader = vtk.vtkSTLReader()
+        reader.SetFileName(filename)
+        reader.Update()
+
+        self.from_vtu(reader.GetOutput)
+
+    def read_generic(self, filename, reader):
+        """Convert from file using a given vtk file reader."""
+        
+        reader.SetFileName(filename)
+        reader.Update()
+
+        self.from_vtu(reader.GetOutput)
+
+
+    def collapse_ed(self, tol):
         """Collapse and remove any edges smaller than tol"""
 
         ugrid = self.as_vtk()
@@ -907,43 +931,88 @@ class GmshMesh(object):
 
         elengths=[]
 
-        for _ in range(edges.GetNumberOfCells()):
-            cell = edges.GetCell(_)
-            elengths.append(cell.GetLength2())
-
-        elist = list(enumerate(elengths))
-        elist.sort(key=lambda _:_[1])
-
-
         loc = vtk.vtkPointLocator()
         loc.SetDataSet(ugrid)
         loc.BuildLocator()
+        
+        sqrlen=0
 
-        for k,sqrlen in elist:
-            if sqrlen>=tol**2:
+        while True:
+
+            for _ in range(edges.GetNumberOfCells()):
+                cell = edges.GetCell(_)
+                elengths.append(cell.GetLength2())
+
+    def collapse_edges(self, tol):
+        """Collapse and remove any edges smaller than tol"""
+
+        ugrid = self.as_vtk()
+
+        extract = vtk.vtkExtractEdges()
+
+        extract.SetInputData(ugrid)
+
+        extract.Update()
+
+        edges = extract.GetOutput()
+
+        loc = vtk.vtkMergePoints()
+        pts = vtk.vtkPoints()
+        loc.InitPointInsertion(pts, ugrid.GetBounds())
+ 
+        for _ in range(ugrid.GetNumberOfPoints()):
+            loc.InsertNextPoint(ugrid.GetPoint(_))
+        
+        sqrlen=0
+
+        while True:
+
+            elengths=[]
+
+            for _ in range(edges.GetNumberOfCells()):
+                cell = edges.GetCell(_)
+
+                pt0 = numpy.array(cell.GetPoints().GetPoint(0))
+                pt1 = numpy.array(cell.GetPoints().GetPoint(1))
+                elengths.append(sum((pt1-pt0)**2))
+
+            elist = list(enumerate(elengths))
+            elist.sort(key=lambda _:_[1])
+        
+            if sqrlen>tol**2:
                 break
+
+            for k,sqrlen in elist:
+                if sqrlen == 0.0 :
+                    continue
+                if sqrlen>tol**2:
+                    break
             
-            cell = edges.GetCell(k)
+                cell = edges.GetCell(k)
 
-            pid0 = cell.GetPoints().GetPoint(0)
-            pid1 = cell.GetPoints().GetPoint(1)
+                ptt0 = cell.GetPoints().GetPoint(0)
+                ptt1 = cell.GetPoints().GetPoint(1)
+                
+                pid0 = loc.IsInsertedPoint(ptt0)
+                pid1 = loc.IsInsertedPoint(ptt1)
+                
+                pt0 = ugrid.GetPoint(pid0)
+                pt1 = ugrid.GetPoint(pid1)
 
-            pid0 = loc.FindClosestPoint(pid0)
-            pid1 = loc.FindClosestPoint(pid1)
-
-            pt0 = ugrid.GetPoint(pid0)
-            pt1 = ugrid.GetPoint(pid1)
-
-            ptm = [(p0+p1)/2.0 for p0,p1 in zip(pt0,pt1)]
-
-            ugrid.GetPoints().SetPoint(pid0,ptm)
-            ugrid.GetPoints().SetPoint(pid1,ptm)
+                ptm = [(p0+p1)/2.0 for p0,p1 in zip(pt0,pt1)]
+                
+                ugrid.GetPoints().SetPoint(pid0,ptm)
+                ugrid.GetPoints().SetPoint(pid1,ptm)
+                loc.InsertPoint(pid0,ptm)
+                loc.InsertPoint(pid1,ptm)
+                edges.GetPoints().SetPoint(cell.GetPointIds().GetId(0),ptm)
+                edges.GetPoints().SetPoint(cell.GetPointIds().GetId(1),ptm)
 
         self.coherence(ugrid)
             
         
 
-    def coherence(self, ugrid=None):
+    def coherence(self, ugrid=None, tol=1.0e-8):
         """Remove duplicate nodes and degenerate elements."""
 
         def merge_points(ugrid):
@@ -981,14 +1050,14 @@ class GmshMesh(object):
 
 
             if cell.GetCellDimension()==1:
-                if cell.GetLength2()==0.0:
+                if cell.GetLength2()<tol:
                     continue
             elif cell.GetCellDimension()==2:
-                if cell.ComputeArea()==0.0:
+                if cell.ComputeArea()<tol:
                     continue
             elif cell.GetCellDimension()==3:
                 if cell.ComputeVolume(*[cell.GetPoints().GetPoint(_)
-                                              for _ in range(4)])==0.0:
+                                              for _ in range(4)])<tol:
                     continue
 
             cell_map.append(i)
