@@ -802,6 +802,18 @@ class GmshMesh(object):
             writer.SetInputData(ugrid)
         writer.Write()
 
+    def write_generic(self, filename, writer, **kwargs):
+        """Output mesh using a specified vtk data writer with given filename."""
+
+        ugrid = self.as_vtk(**kwargs)
+
+        writer.SetFileName(filename)
+        if vtk.VTK_MAJOR_VERSION<6:
+            writer.SetInput(ugrid)
+        else:
+            writer.SetInputData(ugrid)
+        writer.Write()
+
     def as_vtk(self, elementary_index=0):
         """Convert to a VTK unstructured grid object, ugrid."""
 
@@ -1127,4 +1139,69 @@ class XMLreader(object):
 
     def GetOutput(self):
         return self._ugrid
+        
+class XMLwriter(object):
+    ### Writer for dolfin .xml format
+
+    def __init__(self):
+        self._ugrid = None
+        self._FileName = None
+        
+    def SetFileName(self, filename):
+        self._FileName = filename
+
+    def SetInput(self, ugrid):
+        self._ugrid = ugrid
+
+    def SetInputData(self, ugrid):
+        self._ugrid = ugrid
+
+    def Write(self):
+        from lxml import etree as ET
+
+        vtk_cells={vtk.VTK_TRIANGLE:('triangle',2,vtk.VTK_TRIANGLE),
+                   vtk.VTK_TETRA:('tetrahedron',3,vtk.VTK_TETRA)}
+        celltype = ('',0,-1)
+        cell_ids=[]
+
+        for _ in range(self._ugrid.GetNumberOfCells()):
+            cell = self._ugrid.GetCell(_)
+            if vtk_cells[cell.GetCellType()][0]>celltype[1]:
+                celltype = vtk_cells[cell.GetCellType()]
+                ncells=1
+                cell_ids = [[cell.GetPointIds().GetId(k)
+                             for k in range(cell.GetNumberOfPoints())]]
+            elif vtk_cells[cell.GetCellType()][0]==celltype[1]:
+                ncells+=1
+                cell_ids.append([cell.GetPointIds().GetId(k)
+                                 for k in range(cell.GetNumberOfPoints())])
+
+        
+            
+
+        tree = ET.ElementTree(element=ET.Element('dolfin',{}))
+        root = tree.getroot()
+
+        mesh = ET.Element('mesh',{'celltype':str(celltype[0]),
+                                  'dim':str(celltype[1])})
+        root.append(mesh)
+        vertices = ET.Element('vertices',{'size':str(self._ugrid.GetNumberOfPoints())})
+        mesh.append(vertices)
+        for _ in range(self._ugrid.GetNumberOfPoints()):
+            x = self._ugrid.GetPoint(_)
+            vertex = ET.Element('vertex',{'index':str(_), 'x':str(x[0]),
+                                          'y':str(x[1]), 'z':str(x[2])})
+            vertices.append(vertex)
+
+        cells_element=ET.Element('cells',{'size':str(ncells)})
+        mesh.append(cells_element)
+        for _, ids in enumerate(cell_ids):
+            data = {'index':str(_)}
+            for k, cid in enumerate(ids):
+                data['v%d'%k]=str(cid)
+            ET.SubElement(cells_element, celltype[0], data)
+
+        tree.write(self._FileName, encoding="UTF-8",
+                   xml_declaration=True,
+                   pretty_print=True)
         
