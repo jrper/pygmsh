@@ -1087,5 +1087,44 @@ class GmshMesh(object):
         return self.from_vtk(vgrid)
             
             
-            
+class XMLreader(object):
+    ### Read a dolfin .xml geometry file into a vtk unstructured grid object
+
+    def __init__(self):
+        self._ugrid = None
+        self._FileName = None
+        
+    def SetFileName(self, filename):
+        self._FileName = filename
+
+    def Update(self):
+        
+        import xml.etree.ElementTree as ET
+        tree = ET.parse(self._FileName)
+        root = tree.getroot()
+        
+        mesh = root.find('mesh')
+        points  = mesh.find('vertices')
+        cells = mesh.find('cells')
+
+        self._ugrid = vtk.vtkUnstructuredGrid()
+        self._ugrid.Allocate(0)
+        pts = vtk.vtkPoints()
+        
+        for point in points:
+            x = [float(point.attrib[_]) for _ in ('x','y','z')]
+            pts.InsertNextPoint(x)
+
+        self._ugrid.SetPoints(pts)
+
+        vtk_cell = {'triangle':(vtk.VTK_TRIANGLE,3),
+                    'tetrahedron':(vtk.VTK_TETRA,4)}
+
+        for cell in cells:
+            cell_type, npts = vtk_cell[cell_tag]
+            val = [int(cell.attrib['v%d'%_]) for _ in range(npts)]
+            self._ugrid.InsertNextCell(cell_type, npts, val)
+
+    def GetOutput(self):
+        return self._ugrid
         
