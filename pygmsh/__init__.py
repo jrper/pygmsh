@@ -1,42 +1,49 @@
 """ Module containing an expanded python gmsh class"""
 from __future__ import print_function
 
+import struct
+import copy
 import vtk
 from vtk.util import numpy_support
 import numpy
-import struct
-import copy
+
+### Local imports
+
+from pygmsh.vtk_support import XMLreader, XMLwriter
 
 class LineDict(object):
-    def __init__(self,*args,**kwargs):
-        self._data=dict(*args,**kwargs)
-    def __getitem__(self,i):
+    """ Specialised dictionary of lines."""
+    def __init__(self, *args, **kwargs):
+        self._data = dict(*args, **kwargs)
+    def __getitem__(self, i):
         return self._data[tuple(sorted(i))]
     def __len__(self):
         return len(self._data)
-    def setdefault(self,k,v):
-        if tuple(k) in self._data:
-            return self._data[tuple(k)]
-        ks = list(k)
-        ks.reverse()
-        if tuple(ks) in self._data:
-            return -self._data[tuple(ks)]
+    def setdefault(self, key, val):
+        """ Recreate the dictionary setdefault method."""
+        if tuple(key) in self._data:
+            return self._data[tuple(key)]
+        keys = list(key)
+        keys.reverse()
+        if tuple(keys) in self._data:
+            return -self._data[tuple(keys)]
         ## Otherwise add it
-        ks=tuple(k)
-        self._data[ks]=v
-        return self._data[ks]
+        self._data[tuple(key)] = val
+        return self._data[tuple(key)]
     def items(self):
+        """ Recreate the dictionary items method."""
         return self._data.items()
 
 class Node(object):
-    def __init__(self, x=None):
+    """ Class for an N - dimensional node."""
+    def __init__(self, pos=None):
         """Initialise node from data if available"""
         self.vertices = numpy.empty(3)
-        if x:
-            self.vertices[:len(x)] = x[:]
+        if pos:
+            self.vertices[:len(pos)] = pos[:]
 
-    def __getitem__(self,i):
-        return self.vertices[i]
+    def __getitem__(self, _):
+        return self.vertices[_]
 
     def __len__(self):
         return len(self.vertices)
@@ -44,30 +51,29 @@ class Node(object):
     def __hash__(self):
         return hash(self.vertices)
 
-    def __eq__(self, x):
-        return all(self.vertices == numpy.array(x))
+    def __eq__(self, pos):
+        return all(self.vertices == numpy.array(pos))
 
 class Element(object):
+    """ Class for a mesh element/cell."""
 
-    def __init__(self, etype, tags=(0,0), nodes=()):
+    def __init__(self, etype, tags=(0, 0), nodes=()):
         self.etype = etype
         self.tags = tags
         self.nodes = nodes
-
-        self._data=[etype, tags, nodes]
+        self._data = [etype, tags, nodes]
 
     def __len__(self):
         return len(self.nodes)
 
-    def __eq__(self,x):
-        return self.nodes == x
+    def __eq__(self, pos):
+        return self.nodes == pos
 
     def __iter__(self):
         return iter(self._data)
 
-    def __getitem__(self,i):
-        return self._data[i]
-        
+    def __getitem__(self, _):
+        return self._data[_]
 
 class GmshMesh(object):
     """This is a class for storing nodes and elements. Based on Gmsh.py
@@ -95,50 +101,49 @@ class GmshMesh(object):
 
     def __add__(self, mesh):
         """ Get union of meshes through concatenation."""
-        if type(mesh) is not GmshMesh:
+        if not isinstance(mesh, GmshMesh):
             raise TypeError
-        
+
         out = copy.deepcopy(self)
         n_nodes = len(out.nodes)
         n_ele = len(out.elements)
 
-        for id, node in mesh.nodes.items():
-            out.nodes[n_nodes+id]=Node(node)
+        for node_id, node in mesh.nodes.items():
+            out.nodes[n_nodes+node_id] = Node(node)
 
-        for id, ele in mesh.elements.items():
-            out.elements[n_ele+id]=ele
+        for node_id, ele in mesh.elements.items():
+            out.elements[n_ele+node_id] = ele
 
         return out
 
-    def __iadd__(self,mesh):
+    def __iadd__(self, mesh):
         """ Get in place union of meshes through concatenation."""
-        if type(mesh) is not GmshMesh:
+        if not isinstance(mesh, GmshMesh):
             raise TypeError
 
         n_nodes = len(self.nodes)
         n_ele = len(self.elements)
 
-        for id, node in mesh.nodes.items():
-            self.nodes[n_nodes+id]=Node(node)
+        for node_id, node in mesh.nodes.items():
+            self.nodes[n_nodes+node_id] = Node(node)
 
-        for id, ele in mesh.elements.items():
-            self.elements[n_ele+id]=Element(*ele)
+        for node_id, ele in mesh.elements.items():
+            self.elements[n_ele+node_id] = Element(*ele)
 
         return self
 
-    def insert_node(self, node_id, pos=None):
+    def __insert_node__(self, node_id, pos=None):
         """Insert node into mesh data structure."""
         if node_id in self.nodes.keys():
             raise KeyError
         self.nodes[node_id] = Node(pos)
 
-    def insert_element(self, element_id, etype, tags, nodes):
+    def __insert_element__(self, element_id, etype, tags, nodes):
         """Insert element into mesh data structure."""
         if element_id in self.elements.keys():
             raise KeyError
         self.elements[element_id] = Element(etype, tags, nodes)
-
-        self.__add_physical_id__(etype,tags[-1])
+        self.__add_physical_id__(etype, tags[-1])
 
     def nodecount(self):
         """Return number of nodes in the mesh."""
@@ -151,30 +156,30 @@ class GmshMesh(object):
     def transform(self, func):
         """Apply a transformation to the mesh nodes."""
 
-        for k, v in self.nodes.items():
-            self.nodes[k] = Node(func(v))
+        for k, _ in self.nodes.items():
+            self.nodes[k] = Node(func(_))
 
 
-    def reset(self):
+    def __reset__(self):
         """Reinitialise Gmsh data structure"""
         self.nodes = {}
         self.elements = {}
 
     def read(self, mshfile=None):
         """Read a Gmsh .msh file.
-        
+
         Reads Gmsh format 1.0 and 2.0 mesh files, storing the nodes and
         elements in the appropriate dicts.
         """
 
         if not mshfile:
-            mshfile = open(self.filename,'r')
+            mshfile = open(self.filename, 'r')
 
         readmode = 0
         print('Reading %s'%mshfile.name)
-        line='a'
+        line = 'a'
         while line:
-            line=mshfile.readline()
+            line = mshfile.readline()
             line = line.strip()
             if line.startswith('$'):
                 if line == '$NOD' or line == '$Nodes':
@@ -190,37 +195,39 @@ class GmshMesh(object):
             elif readmode:
                 columns = line.split()
                 if readmode == 4:
-                    if len(columns)==3:
-                        vno,ftype,dsize=(float(columns[0]),
-                                         int(columns[1]),
-                                         int(columns[2]))
-                        print(('ASCII','Binary')[ftype]+' format')
+                    if len(columns) == 3:
+                        vno, ftype, dsize = (float(columns[0]),
+                                             int(columns[1]),
+                                             int(columns[2]))
+                        assert vno >= 0.0 and vno <= 2.3
+                        print(('ASCII', 'Binary')[ftype]+' format')
                     else:
-                        endian=struct.unpack('i',columns[0])
+                        endian = struct.unpack('i', columns[0])
+                        assert endian in (0, 1)
                 if readmode == 1:
                     # Version 1.0 or 2.0 Nodes
                     try:
-                        if ftype==0 and len(columns)==4:
-                            self.nodes[int(columns[0])] = Node(map(float, columns[1:]))
-                        elif ftype==1:
-                            nnods=int(columns[0])
-                            for N in range(nnods):
-                                data=mshfile.read(4+3*dsize)
-                                i,x,y,z=struct.unpack('=i3d',data)
-                                self.nodes[i]=Node((x,y,z))
+                        if ftype == 0 and len(columns) == 4:
+                            self.nodes[int(columns[0])] = Node([float(_) for _ in columns[1:]])
+                        elif ftype == 1:
+                            nnods = int(columns[0])
+                            for _ in range(nnods):
+                                data = mshfile.read(4+3*dsize)
+                                i = struct.unpack('=i3d', data)
+                                self.nodes[i[0]] = Node((i[1], i[2], i[3]))
                             mshfile.read(1)
                     except ValueError:
-                        print('Node format error: '+line, ERROR)
+                        print('Node format error: '+line)
                         readmode = 0
-                elif ftype==0 and  readmode > 1 and len(columns) > 5:
-                    # Version 1.0 or 2.0 Elements 
+                elif ftype == 0 and  readmode > 1 and len(columns) > 5:
+                    # Version 1.0 or 2.0 Elements
                     try:
-                        columns = map(int, columns)
+                        columns = [int(_) for _ in columns]
                     except ValueError:
-                        print('Element format error: '+line, ERROR)
+                        print('Element format error: '+line)
                         readmode = 0
                     else:
-                        (id, type) = columns[0:2]
+                        (ele_id, ele_type) = columns[0:2]
                         if readmode == 2:
                             # Version 1.0 Elements
                             tags = columns[2:4]
@@ -230,34 +237,35 @@ class GmshMesh(object):
                             ntags = columns[2]
                             tags = columns[3:3+ntags]
                             nodes = columns[3+ntags:]
-                        self.elements[id] = Element(type, tags, nodes)
-                        self.__add_physical_id__(type,tags[-1])
-                elif readmode == 3 and ftype==1:
-                    tdict={1:2,2:3,3:4,4:4,5:5,6:6,7:5,8:3,9:6,10:9,11:10}
+                        self.elements[ele_id] = Element(ele_type, tags, nodes)
+                        self.__add_physical_id__(ele_type, tags[-1])
+                elif readmode == 3 and ftype == 1:
+                    tdict = {1:2, 2:3, 3:4, 4:4, 5:5, 6:6,
+                             7:5, 8:3, 9:6, 10:9, 11:10}
                     try:
-                        neles=int(columns[0])
-                        k=0
-                        while k<neles:
-                            etype,ntype,ntags=struct.unpack('=3i',mshfile.read(3*4))
-                            k+=ntype
-                            for j in range(ntype):
-                                mysize=1+ntags+tdict[etype]
-                                data=struct.unpack('=%di'%mysize,
-                                                   mshfile.read(4*mysize))
-                                self.elements[data[0]]=Element(etype,
-                                                        data[1:1+ntags],
-                                                        data[1+ntags:])
-                                self.__add_physical_id__(etype,data[ntags])
+                        neles = int(columns[0])
+                        k = 0
+                        while k < neles:
+                            etype, ntype, ntags = struct.unpack('=3i', mshfile.read(3*4))
+                            k += ntype
+                            for _ in range(ntype):
+                                mysize = 1+ntags+tdict[etype]
+                                data = struct.unpack('=%di'%mysize,
+                                                     mshfile.read(4*mysize))
+                                self.elements[data[0]] = Element(etype,
+                                                                 data[1:1+ntags],
+                                                                 data[1+ntags:])
+                                self.__add_physical_id__(etype, data[ntags])
                     except:
                         raise
                     mshfile.read(1)
-                            
+
         print('  %d Nodes'%len(self.nodes))
         print('  %d Elements'%len(self.elements))
 
         mshfile.close()
 
-    def __add_physical_id__(self,etype,tag):
+    def __add_physical_id__(self, etype, tag):
         """Insert new physical id into data structure."""
 
         physical_dict = {15:self.physical_points,
@@ -266,7 +274,6 @@ class GmshMesh(object):
                          4:self.physical_volumes}
 
         physical_dict[etype].add(tag)
-        
 
     def write_ascii(self, filename=None):
         """Dump the mesh out to a Gmsh 2.0 msh file."""
@@ -279,15 +286,15 @@ class GmshMesh(object):
         print('$MeshFormat\n2.0 0 8\n$EndMeshFormat', file=mshfile)
         print('$Nodes\n%d'%len(self.nodes), file=mshfile)
         for node_id, coord in self.nodes.items():
-            print(node_id,' ',' '.join([str(c) for c in  coord]), sep="", file=mshfile)
-        print('$EndNodes',file=mshfile)
-        print('$Elements\n%d'%len(self.elements),file=mshfile)
+            print(node_id, ' ', ' '.join([str(c) for c in  coord]), sep="", file=mshfile)
+        print('$EndNodes', file=mshfile)
+        print('$Elements\n%d'%len(self.elements), file=mshfile)
         for ele_id, elem in self.elements.items():
             (ele_type, tags, nodes) = tuple(elem)
-            print(ele_id,' ',ele_type,' ',len(tags),' ',
-                  ' '.join([str(c) for c in tags]),' ',
+            print(ele_id, ' ', ele_type, ' ', len(tags), ' ',
+                  ' '.join([str(c) for c in tags]), ' ',
                   ' '.join([str(c) for c in nodes]), sep="", file=mshfile)
-        print('$EndElements',file=mshfile)
+        print('$EndElements', file=mshfile)
 
     def write_binary(self, filename=None):
         """Dump the mesh out to a Gmsh 2.0 msh file."""
@@ -295,92 +302,90 @@ class GmshMesh(object):
         if not filename:
             filename = self.filename
 
-        mshfile = open(filename, 'wr')
+        mshfile = open(filename, 'w')
 
         mshfile.write("$MeshFormat\n2.2 1 8\n")
-        mshfile.write(struct.pack('@i',1))
+        mshfile.write(struct.pack('@i', 1))
         mshfile.write("\n$EndMeshFormat\n")
         mshfile.write("$Nodes\n%d\n"%(len(self.nodes)))
         for node_id, coord in self.nodes.items():
-            mshfile.write(struct.pack('@i',node_id))
-            mshfile.write(struct.pack('@3d',*coord))
+            mshfile.write(struct.pack('@i', node_id))
+            mshfile.write(struct.pack('@3d', *coord))
         mshfile.write("\n$EndNodes\n")
         mshfile.write("$Elements\n%d\n"%(len(self.elements)))
         for ele_id, elem in self.elements.items():
             (ele_type, tags, nodes) = tuple(elem)
-            mshfile.write(struct.pack('@i',ele_type))
-            mshfile.write(struct.pack('@i',1))
-            mshfile.write(struct.pack('@i',len(tags)))
-            mshfile.write(struct.pack('@i',ele_id))
-            for c in tags:
-                mshfile.write(struct.pack('@i',c))
-            for c in nodes:
-                mshfile.write(struct.pack('@i',c))
+            mshfile.write(struct.pack('@i', ele_type))
+            mshfile.write(struct.pack('@i', 1))
+            mshfile.write(struct.pack('@i', len(tags)))
+            mshfile.write(struct.pack('@i', ele_id))
+            for _ in tags:
+                mshfile.write(struct.pack('@i', _))
+            for _ in nodes:
+                mshfile.write(struct.pack('@i', _))
         mshfile.write("\n$EndElements\n")
-                      
+
         mshfile.close()
 
-    def write_geo(self, filename = None, use_ids=True, use_physicals=True,
-                  compound_surfaces=[]):
+    def write_geo(self, filename=None, use_ids=True, use_physicals=True,
+                  compound_surfaces=None):
         """Dump the mesh out to a Gmsh .geo geometry file."""
 
-        string=""
-
+        compound_surfaces = compound_surfaces or []
+        string = ""
         if compound_surfaces:
             string += 'Mesh.RemeshAlgorithm=1;\n'
+        for k, _ in self.nodes.items():
+            string += 'Point(%d) = {%f,%f,%f};\n'%(k, _[0], _[1], _[2])
 
-        for k,x in self.nodes.items():
-            string += 'Point(%d) = {%f,%f,%f};\n'%(k,x[0],x[1],x[2])
-
-        line_no = 1;
-
+        line_no = 1
         lines = LineDict()
         surfaces = []
         line_ids = {}
         surface_ids = {}
 
-        for k,l in self.elements.items():
-            if l[0]==1:
+        for k, _ in self.elements.items():
+            if _[0] == 1:
                 if use_physicals:
-                    line_ids.setdefault(l[1][0],[]).append(line_no)
+                    line_ids.setdefault(_[1][0], []).append(line_no)
                 else:
-                    line_ids.setdefault(l[1][1],[]).append(line_no)
-                lines.setdefault(l[2][:],len(lines)+1)
-            elif l[0]==2:
+                    line_ids.setdefault(_[1][1], []).append(line_no)
+                lines.setdefault(_[2][:], len(lines)+1)
+            elif _[0] == 2:
                 if use_physicals:
-                    surface_ids.setdefault(l[1][0],[]).append(k)
+                    surface_ids.setdefault(_[1][0], []).append(k)
                 else:
-                    surface_ids.setdefault(l[1][1],[]).append(k)
-                e1=lines.setdefault([l[2][0],l[2][1]],len(lines)+1)
-                e2=lines.setdefault([l[2][1],l[2][2]],len(lines)+1)
-                e3=lines.setdefault([l[2][2],l[2][0]],len(lines)+1)
-                surfaces.append([e1,e2,e3])
+                    surface_ids.setdefault(_[1][1], []).append(k)
+                edge1 = lines.setdefault([_[2][0], _[2][1]], len(lines)+1)
+                edge2 = lines.setdefault([_[2][1], _[2][2]], len(lines)+1)
+                edge3 = lines.setdefault([_[2][2], _[2][0]], len(lines)+1)
+                surfaces.append([edge1, edge2, edge3])
 
-        for line, line_id in sorted(lines.items(),key=lambda x:x[1]):
-            string += "Line(%d) = {%d,%d};\n"%(line_id,line[0],line[1])
+        for line, line_id in sorted(lines.items(), key=lambda x: x[1]):
+            string += "Line(%d) = {%d,%d};\n"%(line_id, line[0], line[1])
 
         for surface_id, surface in enumerate(surfaces):
             string += "Line Loop(%d) = {%d,%d,%d};"%tuple([surface_id+1]+surface)
-            string += "Plane Surface(%d) = %d;\n"%(surface_id+1,surface_id+1)
+            string += "Plane Surface(%d) = %d;\n"%(surface_id+1, surface_id+1)
 
         if use_ids:
-            for k, v in line_ids.items():
-                string += "Physical Line(%d) = {%s};\n"%(k,",".join(map(str,v)))
-            for k, v in surface_ids.items():
+            for k, lids in line_ids.items():
+                string += "Physical Line(%d) = {%s};\n"%(k, ",".join([str(_) for _ in lids]))
+            for k, lids in surface_ids.items():
                 if k in compound_surfaces:
-                    string += "Compound Surface(%d) = {%s};\n"%(len(surfaces)+k+1,",".join(map(str,v)))
-                    string += "Physical Surface(%d) = {%s};\n"%(k,len(surfaces)+k+1)
+                    string += "Compound Surface(%d) = {%s};\n"%(len(surfaces)+k+1,
+                                                                ",".join([str(_) for _ in lids]))
+                    string += "Physical Surface(%d) = {%s};\n"%(k, len(surfaces)+k+1)
                 else:
-                    string += "Physical Surface(%d) = {%s};\n"%(k,",".join(map(str,v)))
+                    string += "Physical Surface(%d) = {%s};\n"%(k, ",".join([str(_) for _ in lids]))
 
         geofile = open(filename, 'w')
         geofile.write(string)
         geofile.close()
 
-    def write_simple_geo(self, filename = None, use_ids=True, use_physicals=True):
+    def write_simple_geo(self, filename=None, use_ids=True, use_physicals=True):
         """Dump the mesh out to a ,geo file after joining coplanar surfaces."""
 
-        
         string = ""
 
         lines = LineDict()
@@ -390,37 +395,37 @@ class GmshMesh(object):
         line_ids = {}
         vertices = set()
         surface_ids = {}
-        open_surf ={}
+        open_surf = {}
+        line_no = 1
 
-
-        for k,l in self.elements.items():
-            if l[0]==1:
+        for k, _ in self.elements.items():
+            if _[0] == 1:
                 if use_physicals:
-                    line_ids.setdefault(l[1][-1],[]).append(line_no)
+                    line_ids.setdefault(_[1][-1], []).append(line_no)
                 else:
-                    line_ids.setdefault(l[1][1],[]).append(line_no)
-                line_ids.setdefault(l[1][-1],[]).append(line_no)
-                lines.setdefault(l[2][:],len(lines)+1)
-            elif l[0]==2:
+                    line_ids.setdefault(_[1][1], []).append(line_no)
+                line_ids.setdefault(_[1][-1], []).append(line_no)
+                lines.setdefault(_[2][:], len(lines)+1)
+            elif _[0] == 2:
                 if use_physicals:
-                    surface_ids.setdefault(l[1][-1],[]).append(k)
+                    surface_ids.setdefault(_[1][-1], []).append(k)
                 else:
-                    surface_ids.setdefault(l[1][1],[]).append(k)
-                e1=lines.setdefault([l[2][0],l[2][1]],len(lines)+1)
-                e2=lines.setdefault([l[2][1],l[2][2]],len(lines)+1)
-                e3=lines.setdefault([l[2][2],l[2][0]],len(lines)+1)
-                surfaces.append([e1,e2,e3])
+                    surface_ids.setdefault(_[1][1], []).append(k)
+                edge1 = lines.setdefault([_[2][0], _[2][1]], len(lines)+1)
+                edge2 = lines.setdefault([_[2][1], _[2][2]], len(lines)+1)
+                edge3 = lines.setdefault([_[2][2], _[2][0]], len(lines)+1)
+                surfaces.append([edge1, edge2, edge3])
 
-                sid=len(normals)
-                edges.setdefault(abs(e1),[]).append(sid)
-                edges.setdefault(abs(e2),[]).append(sid)
-                edges.setdefault(abs(e3),[]).append(sid)
+                sid = len(normals)
+                edges.setdefault(abs(edge1), []).append(sid)
+                edges.setdefault(abs(edge2), []).append(sid)
+                edges.setdefault(abs(edge3), []).append(sid)
 
-                n =numpy.cross(self.nodes[l[2][1]].vertices-self.nodes[l[2][0]].vertices,
-                               self.nodes[l[2][2]].vertices-self.nodes[l[2][0]].vertices)
-                n=n/numpy.sqrt(sum(n**2))
+                nrm = numpy.cross(self.nodes[_[2][1]].vertices-self.nodes[_[2][0]].vertices,
+                                  self.nodes[_[2][2]].vertices-self.nodes[_[2][0]].vertices)
+                nrm = nrm/numpy.sqrt(sum(nrm**2))
 
-                normals.append(n)
+                normals.append(nrm)
 
         element_map = range(len(normals))
         rebuild = set()
@@ -428,29 +433,28 @@ class GmshMesh(object):
         for edge, eles in sorted(edges.items()):
 
             ## special case of a plane touching itself
-            if len(eles)<2:
+            if len(eles) < 2:
                 continue
 
-            oeles=None
+            oeles = None
 
-            
-            while oeles!=eles and len(eles)>1:
-                oeles=eles
-                eles=[element_map[eles[0]],element_map[eles[1]]]
+            while oeles != eles and len(eles) > 1:
+                oeles = eles
+                eles = [element_map[eles[0]], element_map[eles[1]]]
 
             eles = sorted(eles)
 
-            if 1.0-abs(numpy.dot(normals[eles[0]],normals[eles[1]]))<1.0e-8:
+            if 1.0-abs(numpy.dot(normals[eles[0]], normals[eles[1]])) < 1.0e-8:
                 if edge in surfaces[eles[0]]:
                     I = surfaces[eles[0]].index(edge), 1
                 else:
                     I = surfaces[eles[0]].index(-edge), -1
-                if eles[1]!=eles[0]:
+                if eles[1] != eles[0]:
                     if edge in surfaces[eles[1]]:
                         J = surfaces[eles[1]].index(edge), 1
                     else:
                         J = surfaces[eles[1]].index(-edge), -1
-                    element_map[eles[1]]=eles[0]
+                    element_map[eles[1]] = eles[0]
                     surfaces[eles[0]] = surfaces[eles[0]][I[0]+1:]+surfaces[eles[0]][0:I[0]]
                     surfaces[eles[1]] = surfaces[eles[1]][J[0]+1:]+surfaces[eles[1]][:J[0]]
                     if I[1] == J[1]:
@@ -461,69 +465,69 @@ class GmshMesh(object):
                     edges.pop(edge)
                 else:
                     while edge in surfaces[eles[0]]:
-                            surfaces[eles[0]].remove(edge)
+                        surfaces[eles[0]].remove(edge)
                     while -edge in surfaces[eles[0]]:
-                            surfaces[eles[0]].remove(-edge)
+                        surfaces[eles[0]].remove(-edge)
                     edges.pop(edge)
-                    open_surf.setdefault(eles[0],[]).append(edge)
+                    open_surf.setdefault(eles[0], []).append(edge)
                     rebuild.add(eles[0])
 
-        rev_lin={}
-        for line, line_id in sorted(lines.items(),key=lambda x:x[1]):
+        rev_lin = {}
+        for line, line_id in sorted(lines.items(), key=lambda x: x[1]):
             if line_id in edges:
                 vertices.add(line[0])
                 vertices.add(line[1])
-                rev_lin[line_id]=line[1]
-                rev_lin[-line_id]=line[0]
+                rev_lin[line_id] = line[1]
+                rev_lin[-line_id] = line[0]
 
-        for k,x in self.nodes.items():
+        for k, _ in self.nodes.items():
             if k in vertices:
-                string += 'Point(%d) = {%f,%f,%f};\n'%(k,x[0],x[1],x[2])
+                string += 'Point(%d) = {%f,%f,%f};\n'%(k, _[0], _[1], _[2])
 
 
-        for line, line_id in sorted(lines.items(),key=lambda x:x[1]):
+        for line, line_id in sorted(lines.items(), key=lambda x: x[1]):
             if line_id in edges:
-                string += "Line(%d) = {%d,%d};\n"%(line_id,line[0],line[1])
+                string += "Line(%d) = {%d,%d};\n"%(line_id, line[0], line[1])
 
         for surface_id, surface in enumerate(surfaces):
-            if element_map[surface_id]==surface_id:
+            if element_map[surface_id] == surface_id:
                 if surface_id in open_surf and False:
-                    
-                    cuts =[]
-                    p=surface[-1]
+
+                    cuts = []
+                    p = surface[-1]
                     for I, l in enumerate(surface):
                         if rev_lin[-l] != rev_lin[p]:
                             cuts.append(I)
                         p = l
 
                     print(cuts)
-                
+
                     string += "Line Loop(%d) = {%s};"%(surface_id+1,
-                                                   ",".join(map(str,surface[:I+1])))
-                    if I<len(surface):
+                                                       ",".join([str(_) for _ in surface[:I+1]]))
+                    if I < len(surface):
                         string += "Line Loop(%d) = {%s};"%(len(surfaces)+surface_id+1,
-                                                   ",".join(map(str,surface[I:])))
+                                                           ",".join([str(_) for _ in surface[I:]]))
                         string += "Plane Surface(%d) ={%s,%s};\n"%(surface_id+1,
-                                                                  len(surfaces)+surface_id+1, surface_id+1)
+                                                                   len(surfaces)+surface_id+1,
+                                                                   surface_id+1)
                     else:
-                        string += "Plane Surface(%d) = %s;\n"%(surface_id+1,surface_id+1)
+                        string += "Plane Surface(%d) = %s;\n"%(surface_id+1, surface_id+1)
                 else:
                     string += "Line Loop(%d) = {%s};"%(surface_id+1,
-                                                   ",".join(map(str,surface)))
-                    string += "Plane Surface(%d) = %s;\n"%(surface_id+1,surface_id+1)
+                                                       ",".join([str(_) for _ in surface]))
+                    string += "Plane Surface(%d) = %s;\n"%(surface_id+1, surface_id+1)
 
         if use_ids:
-            for k, v in line_ids.items():
-                string += "Physical Line(%d) = {%s};\n"%(k,",".join(map(str,v)))
-            for k, v in surface_ids.items():
-                string += "Physical Surface(%d) = {%s};\n"%(k,",".join(map(str,v)))
+            for k, val in line_ids.items():
+                string += "Physical Line(%d) = {%s};\n"%(k, ",".join([str(_) for _ in val]))
+            for k, val in surface_ids.items():
+                string += "Physical Surface(%d) = {%s};\n"%(k, ",".join([str(_) for _ in val]))
 
         journalfile = open(filename, 'w')
         journalfile.write(string)
         journalfile.close()
 
-
-    def write_simple_journal(self, filename = None, use_ids=True, use_physicals=True):
+    def write_simple_journal(self, filename=None, use_ids=True, use_physicals=True):
         """Dump the mesh out to a ,geo file after joining coplanar surfaces."""
 
         string = "undo off\n"
@@ -538,70 +542,69 @@ class GmshMesh(object):
         line_ids = {}
         vertices = set()
         surface_ids = {}
-        open_surf ={}
+        open_surf = {}
+        line_no = 1
 
-
-        for k,l in self.elements.items():
-            if l[0]==1:
+        for k, _ in self.elements.items():
+            if _[0] == 1:
                 if use_physicals:
-                    line_ids.setdefault(l[1][-1],[]).append(line_no)
+                    line_ids.setdefault(_[1][-1], []).append(line_no)
                 else:
-                    line_ids.setdefault(l[1][1],[]).append(line_no)
-                line_ids.setdefault(l[1][-1],[]).append(line_no)
-                lines.setdefault(l[2][:],len(lines)+1)
-            elif l[0]==2:
+                    line_ids.setdefault(_[1][1], []).append(line_no)
+                line_ids.setdefault(_[1][-1], []).append(line_no)
+                lines.setdefault(_[2][:], len(lines)+1)
+            elif _[0] == 2:
                 if use_physicals:
-                    surface_ids.setdefault(l[1][-1],[]).append(k)
+                    surface_ids.setdefault(_[1][-1], []).append(k)
                 else:
-                    surface_ids.setdefault(l[1][1],[]).append(k)
-                e1=lines.setdefault([l[2][0],l[2][1]],len(lines)+1)
-                e2=lines.setdefault([l[2][1],l[2][2]],len(lines)+1)
-                e3=lines.setdefault([l[2][2],l[2][0]],len(lines)+1)
-                surfaces.append([e1,e2,e3])
+                    surface_ids.setdefault(_[1][1], []).append(k)
+                edge1 = lines.setdefault([_[2][0], _[2][1]], len(lines)+1)
+                edge2 = lines.setdefault([_[2][1], _[2][2]], len(lines)+1)
+                edge3 = lines.setdefault([_[2][2], _[2][0]], len(lines)+1)
+                surfaces.append([edge1, edge2, edge3])
 
-                sid=len(normals)
-                edges.setdefault(abs(e1),[]).append(sid)
-                edges.setdefault(abs(e2),[]).append(sid)
-                edges.setdefault(abs(e3),[]).append(sid)
+                sid = len(normals)
+                edges.setdefault(abs(edge1), []).append(sid)
+                edges.setdefault(abs(edge2), []).append(sid)
+                edges.setdefault(abs(edge3), []).append(sid)
 
-                n =numpy.cross(self.nodes[l[2][1]].vertices-self.nodes[l[2][0]].vertices,
-                               self.nodes[l[2][2]].vertices-self.nodes[l[2][0]].vertices)
-                n=n/numpy.sqrt(sum(n**2))
+                nrm = numpy.cross(self.nodes[_[2][1]].vertices-self.nodes[_[2][0]].vertices,
+                                  self.nodes[_[2][2]].vertices-self.nodes[_[2][0]].vertices)
+                nrm = nrm/numpy.sqrt(sum(nrm**2))
 
-                normals.append(n)
+                normals.append(nrm)
 
         element_map = range(len(normals))
 
         for edge, eles in sorted(edges.items()):
 
-            print(edge,eles)
+            print(edge, eles)
 
-            oeles=None
+            oeles = None
 
-            while oeles!=eles:
-                oeles=eles
-                eles=[element_map[eles[0]],element_map[eles[1]]]
+            while oeles != eles:
+                oeles = eles
+                eles = [element_map[eles[0]], element_map[eles[1]]]
                 print(eles, oeles)
 
             eles = sorted(eles)
 
-            print(eles,element_map[eles[0]],element_map[eles[1]])
-            
-            print(type(surfaces[eles[0]]),type(surfaces[eles[1]]))
+            print(eles, element_map[eles[0]], element_map[eles[1]])
+            print(type(surfaces[eles[0]]), type(surfaces[eles[1]]))
 
-            print(abs(numpy.dot(normals[eles[0]],normals[eles[1]])))
-            print(1.0-abs(numpy.dot(normals[eles[0]],normals[eles[1]]))<1.0e-8)
-            if 1.0-abs(numpy.dot(normals[eles[0]],normals[eles[1]]))<1.0e-8:
+            print(abs(numpy.dot(normals[eles[0]], normals[eles[1]])))
+            print(1.0-abs(numpy.dot(normals[eles[0]], normals[eles[1]])) < 1.0e-8)
+            if 1.0-abs(numpy.dot(normals[eles[0]], normals[eles[1]])) < 1.0e-8:
                 if edge in surfaces[eles[0]]:
                     I = surfaces[eles[0]].index(edge), 1
                 else:
                     I = surfaces[eles[0]].index(-edge), -1
-                if eles[1]!=eles[0]:
+                if eles[1] != eles[0]:
                     if edge in surfaces[eles[1]]:
                         J = surfaces[eles[1]].index(edge), 1
                     else:
                         J = surfaces[eles[1]].index(-edge), -1
-                    element_map[eles[1]]=eles[0]
+                    element_map[eles[1]] = eles[0]
                     surfaces[eles[0]] = surfaces[eles[0]][I[0]+1:]+surfaces[eles[0]][0:I[0]]
                     surfaces[eles[1]] = surfaces[eles[1]][J[0]+1:]+surfaces[eles[1]][:J[0]]
                     if I[1] == J[1]:
@@ -611,78 +614,72 @@ class GmshMesh(object):
                     edges.pop(edge)
                 else:
                     while edge in surfaces[eles[0]]:
-                            surfaces[eles[0]].remove(edge)
+                        surfaces[eles[0]].remove(edge)
                     while -edge in surfaces[eles[0]]:
-                            surfaces[eles[0]].remove(-edge)
+                        surfaces[eles[0]].remove(-edge)
                     edges.pop(edge)
-                    open_surf.setdefault(eles[0],[]).append(edge)
-                    
+                    open_surf.setdefault(eles[0], []).append(edge)
 
-            print(type(surfaces[eles[0]]),type(surfaces[eles[0]]))
+            print(type(surfaces[eles[0]]), type(surfaces[eles[0]]))
 
-
-        rev_lin={}
-        for line, line_id in sorted(lines.items(),key=lambda x:x[1]):
+        rev_lin = {}
+        for line, line_id in sorted(lines.items(), key=lambda x: x[1]):
             if line_id in edges:
                 vertices.add(line[0])
                 vertices.add(line[1])
-                rev_lin[line_id]=line[1]
-                rev_lin[-line_id]=line[0]
+                rev_lin[line_id] = line[1]
+                rev_lin[-line_id] = line[0]
 
-        vmap={}
-        i=1
-        for k,x in self.nodes.items():
+        vmap = {}
+        i = 1
+        for k, _ in self.nodes.items():
             if k in vertices:
-                string += "create vertex %f %f %f\n"%(x[0],x[1],x[2])
+                string += "create vertex %f %f %f\n"%(_[0], _[1], _[2])
                 vmap[k] = i
                 i += 1
 
-        lmap={}
-        i=1
-        for line, line_id in sorted(lines.items(),key=lambda x:x[1]):
+        lmap = {}
+        i = 1
+        for line, line_id in sorted(lines.items(), key=lambda x: x[1]):
             if line_id in edges:
                 string += "create curve vertex %d %d\n"%(vmap[line[0]],
                                                          vmap[line[1]])
                 lmap[line_id] = i
                 i += 1
 
-
         emap = {}
         i = 1
         for surface_id, surface in enumerate(surfaces):
-            if element_map[surface_id]==surface_id:
-                string += "create surface curve %s\n"%" ".join(map(str,
-                                                                   map(lambda x:lmap[abs(x)],
-                                                                       surface)))
+            if element_map[surface_id] == surface_id:
+                string += "create surface curve %s\n"%" ".join([str(_) for _ in
+                                                                [lmap[abs(k)] for k in surface]])
                 emap[surface_id] = i
                 i += 1
-                    
 
         if use_ids:
-            for k, v in line_ids.items():
+            for k, val in line_ids.items():
                 pass
-            for k, v in surface_ids.items():
-                V=[V for V in v if element_map[V-1]==V-1]
-                V = map(lambda x: emap[x-1], V)
-                string += "Sideset %d surface %s\n"%(k," ".join(map(str,V)))
+            for k, val in surface_ids.items():
+                val = [_ for _ in val if element_map[_-1] == _-1]
+                val = [emap[_-1] for _ in  val]
+                string += "Sideset %d surface %s\n"%(k, " ".join([str(_) for _ in val]))
 
-        print(sum(numpy.array(element_map)==range(len(element_map))))
+        print(sum(numpy.array(element_map) == range(len(element_map))))
 
         journalfile = open(filename, 'w')
         journalfile.write(string)
         journalfile.close()
 
-    def write_journal(self, filename = None, use_ids=True, use_physicals=True):
+    def write_journal(self, filename=None, use_ids=True, use_physicals=True):
         """Dump the mesh out to a cubit .jou journal file."""
 
-        
         string = "undo off\n"
         string += "reset\n"
         string += "set echo off\n"
         string += "set journal off\n"
 
-        for k,x in self.nodes.items():
-            string += "create vertex %f %f %f\n"%(x[0],x[1],x[2])
+        for k, _ in self.nodes.items():
+            string += "create vertex %f %f %f\n"%(_[0], _[1], _[2])
 
         lines = LineDict()
         surfaces = []
@@ -690,82 +687,80 @@ class GmshMesh(object):
         normals = []
         line_ids = {}
         surface_ids = {}
+        line_no = 1
 
-
-        for k,l in self.elements.items():
-            if l[0]==1:
+        for k, _ in self.elements.items():
+            if _[0] == 1:
                 if use_physicals:
-                    line_ids.setdefault(l[1][-1],[]).append(line_no)
+                    line_ids.setdefault(_[1][-1], []).append(line_no)
                 else:
-                    line_ids.setdefault(l[1][1],[]).append(line_no)
-                line_ids.setdefault(l[1][-1],[]).append(line_no)
-                lines.setdefault(l[2][:],len(lines)+1)
-            elif l[0]==2:
+                    line_ids.setdefault(_[1][1], []).append(line_no)
+                line_ids.setdefault(_[1][-1], []).append(line_no)
+                lines.setdefault(_[2][:], len(lines)+1)
+            elif _[0] == 2:
                 if use_physicals:
-                    surface_ids.setdefault(l[1][-1],[]).append(k)
+                    surface_ids.setdefault(_[1][-1], []).append(k)
                 else:
-                    surface_ids.setdefault(l[1][1],[]).append(k)
-                e1=abs(lines.setdefault([l[2][0],l[2][1]],len(lines)+1))
-                e2=abs(lines.setdefault([l[2][1],l[2][2]],len(lines)+1))
-                e3=abs(lines.setdefault([l[2][2],l[2][0]],len(lines)+1))
-                surfaces.append([e1,e2,e3])
+                    surface_ids.setdefault(_[1][1], []).append(k)
+                edge1 = abs(lines.setdefault([_[2][0], _[2][1]], len(lines)+1))
+                edge2 = abs(lines.setdefault([_[2][1], _[2][2]], len(lines)+1))
+                edge3 = abs(lines.setdefault([_[2][2], _[2][0]], len(lines)+1))
+                surfaces.append([edge1, edge2, edge3])
 
-                sid=len(normals)
-                edges.setdefault(e1,[]).append(sid)
-                edges.setdefault(e2,[]).append(sid)
-                edges.setdefault(e3,[]).append(sid)
+                sid = len(normals)
+                edges.setdefault(edge1, []).append(sid)
+                edges.setdefault(edge2, []).append(sid)
+                edges.setdefault(edge3, []).append(sid)
 
-                n =numpy.cross(self.nodes[l[2][1]].vertices-self.nodes[l[2][0]].vertices,
-                               self.nodes[l[2][2]].vertices-self.nodes[l[2][0]].vertices)
-                n=n/numpy.sqrt(sum(n**2))
+                nrm = numpy.cross(self.nodes[_[2][1]].vertices-self.nodes[_[2][0]].vertices,
+                                  self.nodes[_[2][2]].vertices-self.nodes[_[2][0]].vertices)
+                nrm = nrm/numpy.sqrt(sum(nrm**2))
 
-                normals.append(n)
+                normals.append(nrm)
 
         element_map = range(len(normals))
 
         for edge, eles in sorted(edges.items()):
 
-            print(edge,eles)
+            print(edge, eles)
 
-            oeles=None
+            oeles = None
 
-            while oeles!=eles:
-                oeles=eles
-                eles=[element_map[eles[0]],element_map[eles[1]]]
+            while oeles != eles:
+                oeles = eles
+                eles = [element_map[eles[0]], element_map[eles[1]]]
                 print(eles, oeles)
 
             eles = sorted(eles)
 
-            print(eles,element_map[eles[0]],element_map[eles[1]])
-            
-            print(type(surfaces[eles[0]]),type(surfaces[eles[1]]))
+            print(eles, element_map[eles[0]], element_map[eles[1]])
+            print(type(surfaces[eles[0]]), type(surfaces[eles[1]]))
 
-            if abs(numpy.dot(normals[eles[0]],normals[eles[1]]))-1.0<1.0e-8:
+            if abs(numpy.dot(normals[eles[0]], normals[eles[1]]))-1.0 < 1.0e-8:
                 surfaces[eles[0]].remove(edge)
-                if eles[1]!=eles[0]:
+                if eles[1] != eles[0]:
                     surfaces[eles[1]].remove(edge)
-                    element_map[eles[1]]=eles[0]
+                    element_map[eles[1]] = eles[0]
                     surfaces[eles[0]].extend(surfaces[eles[1]])
-                    surfaces[eles[1]]=None
+                    surfaces[eles[1]] = None
                     edges.pop(edge)
                 else:
                     surfaces[eles[0]].remove(edge)
 
-            print(type(surfaces[eles[0]]),type(surfaces[eles[0]]))
+            print(type(surfaces[eles[0]]), type(surfaces[eles[0]]))
 
-
-        for line, line_id in sorted(lines.items(),key=lambda x:x[1]):
+        for line, line_id in sorted(lines.items(), key=lambda x: x[1]):
             if line_id in edges:
                 string += "create curve vertex %d %d\n"%line
-        for k,surface in enumerate(surfaces):
-            if element_map[k]==k:
-                string += "create surface curve %s\n"%" ".join(map(str,surface))
-                
+        for k, surface in enumerate(surfaces):
+            if element_map[k] == k:
+                string += "create surface curve %s\n"%" ".join([str(_) for _ in surface])
+
         if use_ids:
-            for k, v in line_ids.items():
+            for k, val in line_ids.items():
                 pass
-            for k, v in surface_ids.items():
-                string += "Sideset %d surface %s\n"%(k," ".join(map(str,v)))
+            for k, val in surface_ids.items():
+                string += "Sideset %d surface %s\n"%(k, " ".join([str(_) for _ in val]))
 
         journalfile = open(filename, 'w')
         journalfile.write(string)
@@ -778,7 +773,7 @@ class GmshMesh(object):
 
         writer = vtk.vtkXMLUnstructuredGridWriter()
         writer.SetFileName(filename)
-        if vtk.VTK_MAJOR_VERSION<6:
+        if vtk.VTK_MAJOR_VERSION < 6:
             writer.SetInput(ugrid)
         else:
             writer.SetInputData(ugrid)
@@ -789,14 +784,13 @@ class GmshMesh(object):
 
         ugrid = self.as_vtk(**kwargs)
 
+        writer = vtk.vtkSTLWriter()
+        writer.SetFileName(filename)
         if binary:
             writer.SetFileTypeToBinary()
         else:
             writer.SetFileTypeToASCII()
-
-        writer = vtk.vtkSTLWriter()
-        writer.SetFileName(filename)
-        if vtk.VTK_MAJOR_VERSION<6:
+        if vtk.VTK_MAJOR_VERSION < 6:
             writer.SetInput(ugrid)
         else:
             writer.SetInputData(ugrid)
@@ -808,7 +802,7 @@ class GmshMesh(object):
         ugrid = self.as_vtk(**kwargs)
 
         writer.SetFileName(filename)
-        if vtk.VTK_MAJOR_VERSION<6:
+        if vtk.VTK_MAJOR_VERSION < 6:
             writer.SetInput(ugrid)
         else:
             writer.SetInputData(ugrid)
@@ -817,23 +811,17 @@ class GmshMesh(object):
     def as_vtk(self, elementary_index=0):
         """Convert to a VTK unstructured grid object, ugrid."""
 
-        etype={15:vtk.VTK_PIXEL,
-               1:vtk.VTK_LINE,
-               2:vtk.VTK_TRIANGLE,
-               4:vtk.VTK_TETRA}
-        point_map = {};        
-        
+        etype = {15:vtk.VTK_PIXEL,
+                 1:vtk.VTK_LINE,
+                 2:vtk.VTK_TRIANGLE,
+                 4:vtk.VTK_TETRA}
+        point_map = {}
         ugrid = vtk.vtkUnstructuredGrid()
-
         pts = vtk.vtkPoints()
 
-
-        for i, v in enumerate(self.nodes.items()):
-            (node_id, nodes) = v
-            
-            pts.InsertNextPoint(nodes)
-            point_map[node_id]=i
-
+        for i, _ in enumerate(self.nodes.items()):
+            pts.InsertNextPoint(_[1])
+            point_map[_[0]] = i
 
         ugrid.SetPoints(pts)
         ugrid.Allocate(len(self.elements))
@@ -848,36 +836,34 @@ class GmshMesh(object):
         elementary_entities.SetNumberOfTuples(len(self.elements))
         elementary_entities.SetName("ElementaryEntities")
 
-        for i, v in enumerate(self.elements.items()):
-
-            k, ele = v
+        for i, _ in enumerate(self.elements.items()):
+            k, ele = _
             ids = vtk.vtkIdList()
 
             for node in ele[2]:
                 ids.InsertNextId(point_map[node])
 
             ugrid.InsertNextCell(etype[ele[0]], ids)
-            elementary_entities.SetValue(i,ele[1][elementary_index])
-            physical_ids.SetValue(i,ele[1][-1])
+            elementary_entities.SetValue(i, ele[1][elementary_index])
+            physical_ids.SetValue(i, ele[1][-1])
 
         ugrid.GetCellData().AddArray(elementary_entities)
         ugrid.GetCellData().AddArray(physical_ids)
 
-        return  ugrid
+        return ugrid
 
     def from_vtk(self, ugrid):
         """Convert from a VTK unstructured grid object, ugrid."""
 
-        etype={vtk.VTK_PIXEL:15,
-               vtk.VTK_LINE:1,
-               vtk.VTK_TRIANGLE:2,
-               vtk.VTK_TETRA:4}
+        etype = {vtk.VTK_PIXEL:15,
+                 vtk.VTK_LINE:1,
+                 vtk.VTK_TRIANGLE:2,
+                 vtk.VTK_TETRA:4}
 
-        self.reset()
+        self.__reset__()
 
         for i in range(ugrid.GetNumberOfPoints()):
             self.nodes[i+1] = Node(ugrid.GetPoint(i))
-        
 
         for i in range(ugrid.GetNumberOfCells()):
 
@@ -893,7 +879,8 @@ class GmshMesh(object):
             if not tags:
                 tags.extend((i, i))
 
-            self.elements[i+1] = (etype[cell.GetCellType()],tags,[ids.GetId(_)+1 for _ in range(ids.GetNumberOfIds())])
+            self.elements[i+1] = (etype[cell.GetCellType()], tags,
+                                  [ids.GetId(_)+1 for _ in range(ids.GetNumberOfIds())])
             self.__add_physical_id__(etype[cell.GetCellType()], tags[-1])
 
         print('  %d Nodes'%len(self.nodes))
@@ -903,30 +890,29 @@ class GmshMesh(object):
 
     def read_vtu(self, filename):
         """Convert from a VTU file."""
-        
+
         reader = vtk.vtkXMLUnstructuredGridReader()
         reader.SetFileName(filename)
         reader.Update()
 
-        self.from_vtu(reader.GetOutput)
+        self.from_vtk(reader.GetOutput)
 
     def read_stl(self, filename):
         """Convert from an STL file."""
-        
+
         reader = vtk.vtkSTLReader()
         reader.SetFileName(filename)
         reader.Update()
 
-        self.from_vtu(reader.GetOutput)
+        self.from_vtk(reader.GetOutput)
 
-    def read_generic(self, filename, reader):
+    def read_generic(self, filename, reader=vtk.vtkGenericDataObjectReader):
         """Convert from file using a given vtk file reader."""
-        
+
         reader.SetFileName(filename)
         reader.Update()
 
-        self.from_vtu(reader.GetOutput)
-
+        self.from_vtk(reader.GetOutput)
 
     def collapse_ed(self, tol):
         """Collapse and remove any edges smaller than tol"""
@@ -934,20 +920,19 @@ class GmshMesh(object):
         ugrid = self.as_vtk()
 
         extract = vtk.vtkExtractEdges()
-
         extract.SetInputData(ugrid)
-
         extract.Update()
 
         edges = extract.GetOutput()
 
-        elengths=[]
+        elengths = []
 
         loc = vtk.vtkPointLocator()
         loc.SetDataSet(ugrid)
         loc.BuildLocator()
-        
-        sqrlen=0
+
+#        sqrlen = 0
+        del tol
 
         while True:
 
@@ -961,9 +946,7 @@ class GmshMesh(object):
         ugrid = self.as_vtk()
 
         extract = vtk.vtkExtractEdges()
-
         extract.SetInputData(ugrid)
-
         extract.Update()
 
         edges = extract.GetOutput()
@@ -971,15 +954,15 @@ class GmshMesh(object):
         loc = vtk.vtkMergePoints()
         pts = vtk.vtkPoints()
         loc.InitPointInsertion(pts, ugrid.GetBounds())
- 
+
         for _ in range(ugrid.GetNumberOfPoints()):
             loc.InsertNextPoint(ugrid.GetPoint(_))
-        
-        sqrlen=0
+
+        sqrlen = 0
 
         while True:
 
-            elengths=[]
+            elengths = []
 
             for _ in range(edges.GetNumberOfCells()):
                 cell = edges.GetCell(_)
@@ -989,61 +972,57 @@ class GmshMesh(object):
                 elengths.append(sum((pt1-pt0)**2))
 
             elist = list(enumerate(elengths))
-            elist.sort(key=lambda _:_[1])
-        
-            if sqrlen>tol**2:
+            elist.sort(key=lambda _: _[1])
+
+            if sqrlen > tol**2:
                 break
 
-            for k,sqrlen in elist:
-                if sqrlen == 0.0 :
+            for k, sqrlen in elist:
+                if sqrlen == 0.0:
                     continue
-                if sqrlen>tol**2:
+                if sqrlen > tol**2:
                     break
-            
+
                 cell = edges.GetCell(k)
 
                 ptt0 = cell.GetPoints().GetPoint(0)
                 ptt1 = cell.GetPoints().GetPoint(1)
-                
+
                 pid0 = loc.IsInsertedPoint(ptt0)
                 pid1 = loc.IsInsertedPoint(ptt1)
-                
+
                 pt0 = ugrid.GetPoint(pid0)
                 pt1 = ugrid.GetPoint(pid1)
 
-                ptm = [(p0+p1)/2.0 for p0,p1 in zip(pt0,pt1)]
-                
-                ugrid.GetPoints().SetPoint(pid0,ptm)
-                ugrid.GetPoints().SetPoint(pid1,ptm)
-                loc.InsertPoint(pid0,ptm)
-                loc.InsertPoint(pid1,ptm)
-                edges.GetPoints().SetPoint(cell.GetPointIds().GetId(0),ptm)
-                edges.GetPoints().SetPoint(cell.GetPointIds().GetId(1),ptm)
+                ptm = [(p0+p1)/2.0 for p0, p1 in zip(pt0, pt1)]
+
+                ugrid.GetPoints().SetPoint(pid0, ptm)
+                ugrid.GetPoints().SetPoint(pid1, ptm)
+                loc.InsertPoint(pid0, ptm)
+                loc.InsertPoint(pid1, ptm)
+                edges.GetPoints().SetPoint(cell.GetPointIds().GetId(0), ptm)
+                edges.GetPoints().SetPoint(cell.GetPointIds().GetId(1), ptm)
 
         self.coherence(ugrid)
-            
-        
 
     def coherence(self, ugrid=None, tol=1.0e-8):
         """Remove duplicate nodes and degenerate elements."""
 
         def merge_points(ugrid):
+            """Merge collocated points in a vtk Unstructured grid."""
 
-            mf = vtk.vtkMergePoints()
-            pts = vtk.vtkPoints()
-            mf.InitPointInsertion(pts,ugrid.GetBounds())
+            mflt = vtk.vtkMergePoints()
+            mflt.InitPointInsertion(vtk.vtkPoints(), ugrid.GetBounds())
 
             point_map = []
             n_nonunique = 0
 
-    
-
-            for i in range(ugrid.GetNumberOfPoints()):
+            for _ in range(ugrid.GetNumberOfPoints()):
                 newid = vtk.mutable(0)
-                n_nonunique += mf.InsertUniquePoint(ugrid.GetPoint(i),newid)
+                n_nonunique += mflt.InsertUniquePoint(ugrid.GetPoint(_), newid)
                 point_map.append(newid)
-                
-            return pts, point_map
+
+            return mflt.GetPoints(), point_map
 
         if ugrid is None:
             ugrid = self.as_vtk()
@@ -1051,157 +1030,45 @@ class GmshMesh(object):
         pts, point_map = merge_points(ugrid)
 
         vgrid = vtk.vtkUnstructuredGrid()
-
         vgrid.SetPoints(pts)
 
         cell_map = []
 
-        for i in range(ugrid.GetNumberOfCells()):
-            cell = ugrid.GetCell(i)
+        for _ in range(ugrid.GetNumberOfCells()):
+            cell = ugrid.GetCell(_)
             ids = vtk.vtkIdList()
 
-
-            if cell.GetCellDimension()==1:
-                if cell.GetLength2()<tol:
+            if cell.GetCellDimension() == 1:
+                if cell.GetLength2() < tol:
                     continue
-            elif cell.GetCellDimension()==2:
-                if cell.ComputeArea()<tol:
+            elif cell.GetCellDimension() == 2:
+                if cell.ComputeArea() < tol:
                     continue
-            elif cell.GetCellDimension()==3:
+            elif cell.GetCellDimension() == 3:
                 if cell.ComputeVolume(*[cell.GetPoints().GetPoint(_)
-                                              for _ in range(4)])<tol:
+                                        for _ in range(4)]) < tol:
                     continue
 
-            cell_map.append(i)
+            cell_map.append(_)
 
             for j in range(cell.GetPointIds().GetNumberOfIds()):
                 ids.InsertNextId(point_map[cell.GetPointIds().GetId(j)])
 
-            vgrid.InsertNextCell(cell.GetCellType(),ids)
+            vgrid.InsertNextCell(cell.GetCellType(), ids)
 
-        cd = vgrid.GetCellData()
-        icd = ugrid.GetCellData()
+        cdata = vgrid.GetCellData()
+        icdata = ugrid.GetCellData()
 
-        cd.CopyStructure(icd)
+        cdata.CopyStructure(icdata)
 
-        for i in range(icd.GetNumberOfArrays()):
-            data = cd.GetArray(i)
-            idata = icd.GetArray(i)
+        for _ in range(icdata.GetNumberOfArrays()):
+            data = cdata.GetArray(_)
+            idata = icdata.GetArray(_)
 
             data.SetNumberOfComponents(idata.GetNumberOfComponents())
             data.SetNumberOfTuples(vgrid.GetNumberOfCells())
 
-
             for i in range(vgrid.GetNumberOfCells()):
-
-                data.SetTuple(i, cell_map[i], idata)        
+                data.SetTuple(i, cell_map[i], idata)
 
         return self.from_vtk(vgrid)
-            
-            
-class XMLreader(object):
-    ### Read a dolfin .xml geometry file into a vtk unstructured grid object
-
-    def __init__(self):
-        self._ugrid = None
-        self._FileName = None
-        
-    def SetFileName(self, filename):
-        self._FileName = filename
-
-    def Update(self):
-        
-        import xml.etree.ElementTree as ET
-        tree = ET.parse(self._FileName)
-        root = tree.getroot()
-        
-        mesh = root.find('mesh')
-        points  = mesh.find('vertices')
-        cells = mesh.find('cells')
-
-        self._ugrid = vtk.vtkUnstructuredGrid()
-        self._ugrid.Allocate(0)
-        pts = vtk.vtkPoints()
-        
-        for point in points:
-            x = [float(point.attrib[_]) for _ in ('x','y','z')]
-            pts.InsertNextPoint(x)
-
-        self._ugrid.SetPoints(pts)
-
-        vtk_cell = {'triangle':(vtk.VTK_TRIANGLE,3),
-                    'tetrahedron':(vtk.VTK_TETRA,4)}
-
-        for cell in cells:
-            cell_type, npts = vtk_cell[cell_tag]
-            val = [int(cell.attrib['v%d'%_]) for _ in range(npts)]
-            self._ugrid.InsertNextCell(cell_type, npts, val)
-
-    def GetOutput(self):
-        return self._ugrid
-        
-class XMLwriter(object):
-    ### Writer for dolfin .xml format
-
-    def __init__(self):
-        self._ugrid = None
-        self._FileName = None
-        
-    def SetFileName(self, filename):
-        self._FileName = filename
-
-    def SetInput(self, ugrid):
-        self._ugrid = ugrid
-
-    def SetInputData(self, ugrid):
-        self._ugrid = ugrid
-
-    def Write(self):
-        from lxml import etree as ET
-
-        vtk_cells={vtk.VTK_TRIANGLE:('triangle',2,vtk.VTK_TRIANGLE),
-                   vtk.VTK_TETRA:('tetrahedron',3,vtk.VTK_TETRA)}
-        celltype = ('',0,-1)
-        cell_ids=[]
-
-        for _ in range(self._ugrid.GetNumberOfCells()):
-            cell = self._ugrid.GetCell(_)
-            if vtk_cells[cell.GetCellType()][0]>celltype[1]:
-                celltype = vtk_cells[cell.GetCellType()]
-                ncells=1
-                cell_ids = [[cell.GetPointIds().GetId(k)
-                             for k in range(cell.GetNumberOfPoints())]]
-            elif vtk_cells[cell.GetCellType()][0]==celltype[1]:
-                ncells+=1
-                cell_ids.append([cell.GetPointIds().GetId(k)
-                                 for k in range(cell.GetNumberOfPoints())])
-
-        
-            
-
-        tree = ET.ElementTree(element=ET.Element('dolfin',{}))
-        root = tree.getroot()
-
-        mesh = ET.Element('mesh',{'celltype':str(celltype[0]),
-                                  'dim':str(celltype[1])})
-        root.append(mesh)
-        vertices = ET.Element('vertices',{'size':str(self._ugrid.GetNumberOfPoints())})
-        mesh.append(vertices)
-        for _ in range(self._ugrid.GetNumberOfPoints()):
-            x = self._ugrid.GetPoint(_)
-            vertex = ET.Element('vertex',{'index':str(_), 'x':str(x[0]),
-                                          'y':str(x[1]), 'z':str(x[2])})
-            vertices.append(vertex)
-
-        cells_element=ET.Element('cells',{'size':str(ncells)})
-        mesh.append(cells_element)
-        for _, ids in enumerate(cell_ids):
-            data = {'index':str(_)}
-            for k, cid in enumerate(ids):
-                data['v%d'%k]=str(cid)
-            ET.SubElement(cells_element, celltype[0], data)
-
-        tree.write(self._FileName, encoding="UTF-8",
-                   xml_declaration=True,
-                   pretty_print=True)
-        
