@@ -203,7 +203,7 @@ class GmshMesh(object):
                         print(('ASCII', 'Binary')[ftype]+' format')
                     else:
                         endian = struct.unpack('i', columns[0])
-                        assert endian in (0, 1)
+                        assert endian[0] in (0, 1)
                 if readmode == 1:
                     # Version 1.0 or 2.0 Nodes
                     try:
