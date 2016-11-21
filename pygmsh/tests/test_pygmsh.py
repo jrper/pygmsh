@@ -1,40 +1,40 @@
 import pytest
-import pygmsh
+from pygmsh import *
 
 def test_blank_init():
-    m = pygmsh.GmshMesh()
+    m = GmshMesh()
     assert(m)
 
 def test_init_from_ascii_file():
-    m = pygmsh.GmshMesh('tests/test.msh')
+    m = GmshMesh('pygmsh/tests/test.msh')
     assert(m)
     assert(m.nodecount()>0)
     assert(m.elementcount()>0)
 
 def test_init_from_binary_file():
-    m = pygmsh.GmshMesh('tests/test_bin.msh')
+    m = GmshMesh('pygmsh/tests/test_bin.msh')
     assert(m)
     assert(m.nodecount()>0)
     assert(m.elementcount()>0)
 
 def test_read_from_ascii_file():
-    m = pygmsh.GmshMesh()
-    f = open('tests/test.msh','r')
+    m = GmshMesh()
+    f = open('pygmsh/tests/test.msh','r')
     m.read(f)
     assert(m)
     assert(m.nodecount()>0)
     assert(m.elementcount()>0)
     
 def test_read_from_binary_file():
-    m = pygmsh.GmshMesh()
-    f = open('tests/test_bin.msh','r')
+    m = GmshMesh()
+    f = open('pygmsh/tests/test_bin.msh','r')
     m.read(f)
     assert(m)
     assert(m.nodecount()>0)
     assert(m.elementcount()>0)
 
 def test_conversion_to_vtu():
-    m = pygmsh.GmshMesh('tests/test.msh')
+    m = GmshMesh('pygmsh/tests/test.msh')
     ugrid = m.as_vtk()
 
     assert(ugrid.GetNumberOfPoints() == m.nodecount())
@@ -43,20 +43,20 @@ def test_conversion_to_vtu():
 
 def test_conversion_from_vtu():
 
-    reader = pygmsh.vtk.vtkXMLUnstructuredGridReader()
-    reader.SetFileName('tests/test.vtu')
+    reader = vtk.vtkXMLUnstructuredGridReader()
+    reader.SetFileName('pygmsh/tests/test.vtu')
     reader.Update()
     ugrid = reader.GetOutput()
 
-    m = pygmsh.GmshMesh()
+    m = GmshMesh()
     m.from_vtk(ugrid)
 
     assert(ugrid.GetNumberOfPoints() == m.nodecount())
     assert(ugrid.GetNumberOfCells() == m.elementcount())
 
 def test_concatentation():
-    m1 = pygmsh.GmshMesh('tests/test.msh')
-    m2 = pygmsh.GmshMesh('tests/test_bin.msh')
+    m1 = GmshMesh('pygmsh/tests/test.msh')
+    m2 = GmshMesh('pygmsh/tests/test_bin.msh')
 
     m3 = m1 + m2
 
@@ -65,8 +65,8 @@ def test_concatentation():
 
 
 def test_inplace_concatentation():
-    m1 = pygmsh.GmshMesh('tests/test.msh')
-    m2 = pygmsh.GmshMesh('tests/test_bin.msh')
+    m1 = GmshMesh('pygmsh/tests/test.msh')
+    m2 = GmshMesh('pygmsh/tests/test_bin.msh')
 
     n_nodes = m1.nodecount()
     n_eles = m1.elementcount()
@@ -78,8 +78,8 @@ def test_inplace_concatentation():
 
 def test_coherence():
 
-    m1 = pygmsh.GmshMesh('tests/test.msh')
-    m2 = pygmsh.GmshMesh('tests/test.msh')
+    m1 = GmshMesh('pygmsh/tests/test.msh')
+    m2 = GmshMesh('pygmsh/tests/test.msh')
 
     m1 += m2
 
@@ -93,40 +93,40 @@ def test_coherence():
 
 
 def test_reset():
-    m = pygmsh.GmshMesh('tests/test.msh')
-    m.reset()
+    m = GmshMesh('pygmsh/tests/test.msh')
+    m.__reset__()
 
     assert(m.nodecount() == 0)
     assert(m.elementcount() == 0)
 
 def test_element_insertion():
 
-    m = pygmsh.GmshMesh()
+    m = GmshMesh()
 
     assert(m.nodecount()==0)
 
-    m.insert_node(0,(0,0,0))
+    m.__insert_node__(0,(0,0,0))
 
     assert(m.nodecount()==1)
 
 def test_element_insertion():
 
-    m = pygmsh.GmshMesh()
+    m = GmshMesh()
 
     assert(m.nodecount()==0)
 
-    m.insert_element(0,1,(0,1),(0,1))
+    m.__insert_element__(0,1,(0,1),(0,1))
 
     assert(m.elementcount()==1)
     
 
 def test_transformation():
 
-    m = pygmsh.GmshMesh()
+    m = GmshMesh()
 
-    m.insert_node(0,(0,0,0))
-    m.insert_node(1,(1,0,0))
-    m.insert_node(2,(0,1,0))
+    m.__insert_node__(0,(0,0,0))
+    m.__insert_node__(1,(1,0,0))
+    m.__insert_node__(2,(0,1,0))
 
     def func(x):
         return (x[1],-x[0],0)
