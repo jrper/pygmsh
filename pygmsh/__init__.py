@@ -500,8 +500,6 @@ class GmshMesh(object):
                             cuts.append(I)
                         p = l
 
-                    print(cuts)
-
                     string += "Line Loop(%d) = {%s};"%(surface_id+1,
                                                        ",".join([str(_) for _ in surface[:I+1]]))
                     if I < len(surface):
@@ -570,7 +568,7 @@ class GmshMesh(object):
 
                 nrm = numpy.cross(self.nodes[_[2][1]].vertices-self.nodes[_[2][0]].vertices,
                                   self.nodes[_[2][2]].vertices-self.nodes[_[2][0]].vertices)
-                nrm = nrm/numpy.sqrt(sum(nrm**2))
+                nrm = nrm/numpy.sqrt(max(1.0e-8,sum(nrm**2)))
 
                 normals.append(nrm)
 
@@ -578,22 +576,18 @@ class GmshMesh(object):
 
         for edge, eles in sorted(edges.items()):
 
-            print(edge, eles)
+            ## special case of a plane touching itself
+            if len(eles) < 2:
+                continue
 
             oeles = None
 
             while oeles != eles:
                 oeles = eles
                 eles = [element_map[eles[0]], element_map[eles[1]]]
-                print(eles, oeles)
 
             eles = sorted(eles)
 
-            print(eles, element_map[eles[0]], element_map[eles[1]])
-            print(type(surfaces[eles[0]]), type(surfaces[eles[1]]))
-
-            print(abs(numpy.dot(normals[eles[0]], normals[eles[1]])))
-            print(1.0-abs(numpy.dot(normals[eles[0]], normals[eles[1]])) < 1.0e-8)
             if 1.0-abs(numpy.dot(normals[eles[0]], normals[eles[1]])) < 1.0e-8:
                 if edge in surfaces[eles[0]]:
                     I = surfaces[eles[0]].index(edge), 1
@@ -619,8 +613,6 @@ class GmshMesh(object):
                         surfaces[eles[0]].remove(-edge)
                     edges.pop(edge)
                     open_surf.setdefault(eles[0], []).append(edge)
-
-            print(type(surfaces[eles[0]]), type(surfaces[eles[0]]))
 
         rev_lin = {}
         for line, line_id in sorted(lines.items(), key=lambda x: x[1]):
@@ -663,8 +655,6 @@ class GmshMesh(object):
                 val = [_ for _ in val if element_map[_-1] == _-1]
                 val = [emap[_-1] for _ in  val]
                 string += "Sideset %d surface %s\n"%(k, " ".join([str(_) for _ in val]))
-
-        print(sum(numpy.array(element_map) == range(len(element_map))))
 
         journalfile = open(filename, 'w')
         journalfile.write(string)
@@ -722,14 +712,15 @@ class GmshMesh(object):
 
         for edge, eles in sorted(edges.items()):
 
-            print(edge, eles)
+            ## special case of a plane touching itself
+            if len(eles) < 2:
+                continue
 
             oeles = None
 
             while oeles != eles:
                 oeles = eles
                 eles = [element_map[eles[0]], element_map[eles[1]]]
-                print(eles, oeles)
 
             eles = sorted(eles)
 
@@ -895,7 +886,7 @@ class GmshMesh(object):
         reader.SetFileName(filename)
         reader.Update()
 
-        self.from_vtk(reader.GetOutput)
+        self.from_vtk(reader.GetOutput())
 
     def read_stl(self, filename):
         """Convert from an STL file."""
@@ -904,15 +895,15 @@ class GmshMesh(object):
         reader.SetFileName(filename)
         reader.Update()
 
-        self.from_vtk(reader.GetOutput)
+        self.from_vtk(reader.GetOutput())
 
-    def read_generic(self, filename, reader=vtk.vtkGenericDataObjectReader):
+    def read_generic(self, filename, reader=vtk.vtkGenericDataObjectReader()):
         """Convert from file using a given vtk file reader."""
 
         reader.SetFileName(filename)
         reader.Update()
 
-        self.from_vtk(reader.GetOutput)
+        self.from_vtk(reader.GetOutput())
 
     def collapse_ed(self, tol):
         """Collapse and remove any edges smaller than tol"""

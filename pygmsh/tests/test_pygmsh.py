@@ -33,13 +33,69 @@ def test_read_from_binary_file():
     assert(m.nodecount()>0)
     assert(m.elementcount()>0)
 
+def test_read_from_vtu():
+    m = GmshMesh()
+    m.read_vtu('pygmsh/tests/test.vtu')
+    assert(m)
+    assert(m.nodecount()>0)
+    assert(m.elementcount()>0)
+
+def test_read_from_stl():
+    m = GmshMesh()
+    m.read_stl('pygmsh/tests/test.stl')
+    assert(m)
+    assert(m.nodecount()>0)
+    assert(m.elementcount()>0)
+
+def test_read_from_xml():
+    m = GmshMesh()
+    m.read_generic('pygmsh/tests/test.xml', XMLreader())
+    assert(m)
+    assert(m.nodecount()>0)
+    assert(m.elementcount()>0)
+
+def test_write_ascii(tmpdir):
+    m = GmshMesh('pygmsh/tests/test.msh')
+    m.write_ascii(filename=tmpdir.join('test.msh').strpath)
+
+def test_write_binary(tmpdir):
+    m = GmshMesh('pygmsh/tests/test.msh')
+    m.write_binary(filename=tmpdir.join('test.msh').strpath)
+
+def test_write_geo(tmpdir):
+    m = GmshMesh('pygmsh/tests/test.msh')
+    m.write_geo(filename=tmpdir.join('test.geo').strpath)
+
+def test_write_simple_geo(tmpdir):
+    m = GmshMesh('pygmsh/tests/test.msh')
+    m.write_simple_geo(filename=tmpdir.join('test.geo').strpath)
+
+def test_write_journal(tmpdir):
+    m = GmshMesh('pygmsh/tests/test.msh')
+    m.write_journal(filename=tmpdir.join('test.e').strpath)
+
+def test_write_simple_journal(tmpdir):
+    m = GmshMesh('pygmsh/tests/test.msh')
+    m.write_simple_journal(filename=tmpdir.join('test.e').strpath)
+
+def test_write_vtu(tmpdir):
+    m = GmshMesh('pygmsh/tests/test.msh')
+    m.write_vtu(filename=tmpdir.join('test.vtu').strpath)
+
+def test_write_stl(tmpdir):
+    m = GmshMesh('pygmsh/tests/test.msh')
+    m.write_stl(filename=tmpdir.join('test.stl').strpath)
+
+def test_write_generic(tmpdir):
+    m = GmshMesh('pygmsh/tests/test.msh')
+    m.write_generic(filename=tmpdir.join('test.vtu').strpath, writer=XMLwriter())
+
 def test_conversion_to_vtu():
     m = GmshMesh('pygmsh/tests/test.msh')
     ugrid = m.as_vtk()
 
     assert(ugrid.GetNumberOfPoints() == m.nodecount())
     assert(ugrid.GetNumberOfCells() == m.elementcount())
-
 
 def test_conversion_from_vtu():
 
@@ -62,7 +118,6 @@ def test_concatentation():
 
     assert(m3.nodecount() == m1.nodecount() + m2.nodecount())
     assert(m3.elementcount() == m1.elementcount() + m2.elementcount())
-
 
 def test_inplace_concatentation():
     m1 = GmshMesh('pygmsh/tests/test.msh')
@@ -91,7 +146,6 @@ def test_coherence():
 #   need to think what coherence should mean here:
 #    assert(m1.elementcount() == m2.elementcount())
 
-
 def test_reset():
     m = GmshMesh('pygmsh/tests/test.msh')
     m.__reset__()
@@ -99,24 +153,18 @@ def test_reset():
     assert(m.nodecount() == 0)
     assert(m.elementcount() == 0)
 
-def test_element_insertion():
+def test_node_insertion():
 
     m = GmshMesh()
-
     assert(m.nodecount()==0)
-
     m.__insert_node__(0,(0,0,0))
-
     assert(m.nodecount()==1)
 
 def test_element_insertion():
 
     m = GmshMesh()
-
     assert(m.nodecount()==0)
-
     m.__insert_element__(0,1,(0,1),(0,1))
-
     assert(m.elementcount()==1)
     
 
